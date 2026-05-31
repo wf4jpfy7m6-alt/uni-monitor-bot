@@ -1,8 +1,10 @@
 import os
 import asyncio
 import logging
+import datetime
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import Application, CommandHandler, ContextTypes, CallbackQueryHandler
+from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from monitor import PositionMonitor
 from aerodrome_monitor import AerodromeMonitor
 from ai_analyst import analyze_position
@@ -20,16 +22,14 @@ CHECK_INTERVAL = int(os.getenv("CHECK_INTERVAL", "600"))
 
 monitor = PositionMonitor(WALLET_ADDRESS)
 aero_monitor = AerodromeMonitor(WALLET_ADDRESS)
+position_states = {}
+bot_app = None
 
 
 async def get_all_positions():
-    """Получить позиции со всех протоколов."""
     uni_positions = await monitor.get_all_positions()
     aero_positions = await aero_monitor.get_positions()
     return uni_positions + aero_positions
-
-# Хранилище состояния позиций (in-memory)
-position_states = {}
 
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -49,11 +49,15 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 async def status_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    msg = await update.message.reply_text("⏳ Загружаю позиции...")
+    if update.message:
+        msg = await update.message.reply_text("⏳ Загружаю позиции...")
+    else:
+        msg = await update.callback_query.message.reply_text("⏳ Загружаю позиции...")
+
     positions = await get_all_positions()
 
     if not positions:
-        await msg.edit_text("😶 Активных позиций не найдено на Arbitrum и Base.")
+        await msg.edit_text("😶 Активных позиций не найдено.")
         return
 
     text = "📊 *Твои позиции Uniswap v3:*\n\n"
@@ -72,7 +76,6 @@ async def status_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 async def analyze_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    # Поддержка как обычных сообщений, так и callback кнопок
     if update.message:
         chat_id = update.message.chat_id
         msg = await update.message.reply_text("🧠 Анализирую позиции с помощью AI...")
@@ -124,8 +127,8 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await analyze_command(query, context)
 
 
-async def monitor_job(context):
-    """Периодическая проверка позиций через job_queue."""
+async def monitor_job():
+    """Периодическая проверка позиций."""
     try:
         positions = await get_all_positions()
         for p in positions:
@@ -143,34 +146,43 @@ async def monitor_job(context):
                     f"{analysis}"
                 )
                 if CHAT_ID:
-                    await context.bot.send_message(
+                    await bot_app.bot.send_message(
                         chat_id=CHAT_ID,
                         text=text,
                         parse_mode="Markdown"
                     )
 
             position_states[key] = p["in_range"]
+        logger.info(f"Проверка завершена: {len(positions)} позиций")
 
     except Exception as e:
         logger.error(f"Ошибка в monitor_job: {e}")
 
 
 def main():
-    app = Application.builder().token(TELEGRAM_TOKEN).build()
+    global bot_app
+    import time
+    time.sleep(5)
 
-    app.add_handler(CommandHandler("start", start))
-    app.add_handler(CommandHandler("status", status_command))
-    app.add_handler(CommandHandler("analyze", analyze_command))
-    app.add_handler(CommandHandler("help", help_command))
-    app.add_handler(CallbackQueryHandler(button_handler))
+    bot_app = Application.builder().token(TELEGRAM_TOKEN).build()
 
-    app.job_queue.run_repeating(monitor_job, interval=CHECK_INTERVAL, first=15)
+    bot_app.add_handler(CommandHandler("start", start))
+    bot_app.add_handler(CommandHandler("status", status_command))
+    bot_app.add_handler(CommandHandler("analyze", analyze_command))
+    bot_app.add_handler(CommandHandler("help", help_command))
+    bot_app.add_handler(CallbackQueryHandler(button_handler))
+
+    scheduler = AsyncIOScheduler()
+    scheduler.add_job(
+        monitor_job, "interval",
+        seconds=CHECK_INTERVAL,
+        next_run_time=datetime.datetime.now() + datetime.timedelta(seconds=20)
+    )
+    scheduler.start()
 
     logger.info("Бот запущен...")
-    app.run_polling(allowed_updates=Update.ALL_TYPES, drop_pending_updates=True)
+    bot_app.run_polling(allowed_updates=Update.ALL_TYPES, drop_pending_updates=True)
 
 
 if __name__ == "__main__":
-    import time
-    time.sleep(5)
     main()
