@@ -274,7 +274,11 @@ class PositionMonitor:
         in_range = tick_lower <= current_tick <= tick_upper
 
         # Примерная стоимость (упрощённо)
-        value_usd = self._estimate_value(liquidity, display_price, display_lower, display_upper)
+        value_usd = self._estimate_value(
+            liquidity, sqrt_price_x96,
+            tick_lower, tick_upper, current_tick,
+            decimals0, decimals1, symbol0, symbol1
+        )
 
         return {
             "token_id": token_id,
@@ -295,24 +299,40 @@ class PositionMonitor:
             "pool_address": pool_addr,
         }
 
-    def _estimate_value(self, liquidity: int, price: float, lower: float, upper: float) -> float:
-        """Грубая оценка стоимости позиции в USD."""
-        if price <= 0 or lower <= 0 or upper <= 0:
+    def _estimate_value(self, liquidity: int, sqrt_price_x96: int, tick_lower: int, tick_upper: int, current_tick: int, decimals0: int, decimals1: int, symbol0: str, symbol1: str) -> float:
+        """Оценка стоимости позиции через реальные amounts токенов."""
+        if liquidity == 0:
             return 0
         try:
-            sqrt_p = math.sqrt(price)
-            sqrt_lower = math.sqrt(lower)
-            sqrt_upper = math.sqrt(upper)
+            sqrt_p = sqrt_price_x96 / (2 ** 96)
+            sqrt_lower = 1.0001 ** (tick_lower / 2)
+            sqrt_upper = 1.0001 ** (tick_upper / 2)
 
-            if price <= lower:
-                amount0 = liquidity * (1 / sqrt_lower - 1 / sqrt_upper) / 1e18
-                return amount0 * price
-            elif price >= upper:
-                amount1 = liquidity * (sqrt_upper - sqrt_lower) / 1e18
-                return amount1
+            if sqrt_p <= sqrt_lower:
+                amount0 = liquidity * (1 / sqrt_lower - 1 / sqrt_upper)
+                amount1 = 0
+            elif sqrt_p >= sqrt_upper:
+                amount0 = 0
+                amount1 = liquidity * (sqrt_upper - sqrt_lower)
             else:
-                amount0 = liquidity * (1 / sqrt_p - 1 / sqrt_upper) / 1e18
-                amount1 = liquidity * (sqrt_p - sqrt_lower) / 1e18
+                amount0 = liquidity * (1 / sqrt_p - 1 / sqrt_upper)
+                amount1 = liquidity * (sqrt_p - sqrt_lower)
+
+            # Нормализуем по decimals
+            amount0 = amount0 / (10 ** decimals0)
+            amount1 = amount1 / (10 ** decimals1)
+
+            # Текущая цена token1 за token0
+            price = (sqrt_p ** 2) * (10 ** decimals0) / (10 ** decimals1)
+
+            # Определяем какой токен стейблкоин
+            if symbol1 in STABLECOINS:
                 return amount0 * price + amount1
-        except Exception:
+            elif symbol0 in STABLECOINS:
+                return amount0 + amount1 / price if price > 0 else amount0
+            else:
+                # Оба не стейблы — считаем через price
+                return amount0 * price + amount1
+        except Exception as e:
+            logger.error(f"Ошибка расчёта стоимости: {e}")
             return 0
