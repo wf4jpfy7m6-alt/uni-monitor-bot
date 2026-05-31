@@ -24,7 +24,7 @@ aero_monitor = AerodromeMonitor(WALLET_ADDRESS)
 
 async def get_all_positions():
     """Получить позиции со всех протоколов."""
-    uni_positions = await get_all_positions()
+    uni_positions = await monitor.get_all_positions()
     aero_positions = await aero_monitor.get_positions()
     return uni_positions + aero_positions
 
