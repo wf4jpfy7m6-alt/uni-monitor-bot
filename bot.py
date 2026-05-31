@@ -168,9 +168,8 @@ def main():
     app.add_handler(CommandHandler("help", help_command))
     app.add_handler(CallbackQueryHandler(button_handler))
 
-    # Запуск фонового мониторинга
-    async def post_init(app):
-        asyncio.create_task(auto_monitor(app))
+    async def post_init(application):
+        application.create_task(auto_monitor(application))
 
     app.post_init = post_init
 
