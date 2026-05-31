@@ -4,6 +4,7 @@ import logging
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import Application, CommandHandler, ContextTypes, CallbackQueryHandler
 from monitor import PositionMonitor
+from aerodrome_monitor import AerodromeMonitor
 from ai_analyst import analyze_position
 
 logging.basicConfig(
@@ -14,10 +15,18 @@ logger = logging.getLogger(__name__)
 
 WALLET_ADDRESS = os.getenv("WALLET_ADDRESS", "0x1074520dd10d6bad7d760f1762c435f658a8f21a")
 TELEGRAM_TOKEN = os.getenv("TELEGRAM_TOKEN")
-CHAT_ID = os.getenv("CHAT_ID")  # твой личный chat_id
-CHECK_INTERVAL = int(os.getenv("CHECK_INTERVAL", "600"))  # каждые 10 минут
+CHAT_ID = os.getenv("CHAT_ID")
+CHECK_INTERVAL = int(os.getenv("CHECK_INTERVAL", "600"))
 
 monitor = PositionMonitor(WALLET_ADDRESS)
+aero_monitor = AerodromeMonitor(WALLET_ADDRESS)
+
+
+async def get_all_positions():
+    """Получить позиции со всех протоколов."""
+    uni_positions = await get_all_positions()
+    aero_positions = await aero_monitor.get_positions()
+    return uni_positions + aero_positions
 
 # Хранилище состояния позиций (in-memory)
 position_states = {}
@@ -41,7 +50,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 async def status_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     msg = await update.message.reply_text("⏳ Загружаю позиции...")
-    positions = await monitor.get_all_positions()
+    positions = await get_all_positions()
 
     if not positions:
         await msg.edit_text("😶 Активных позиций не найдено на Arbitrum и Base.")
@@ -71,7 +80,7 @@ async def analyze_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         chat_id = update.callback_query.message.chat_id
         msg = await update.callback_query.message.reply_text("🧠 Анализирую позиции с помощью AI...")
 
-    positions = await monitor.get_all_positions()
+    positions = await get_all_positions()
 
     if not positions:
         await msg.edit_text("😶 Активных позиций не найдено.")
@@ -119,7 +128,7 @@ async def auto_monitor(app):
     """Фоновая задача — проверяет позиции и шлёт уведомления при выходе из диапазона."""
     while True:
         try:
-            positions = await monitor.get_all_positions()
+            positions = await get_all_positions()
             for p in positions:
                 key = f"{p['network']}_{p['token_id']}"
                 was_in_range = position_states.get(key, True)
