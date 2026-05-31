@@ -21,7 +21,12 @@ RPC_URLS = {
 # Position Manager адреса (различаются по сетям)
 POSITION_MANAGER_ADDRESSES = {
     "Arbitrum": "0xC36442b4a4522E871399CD717aBDD847Ab11FE88",
-    "Base": "0x03a520b32C04BF3bEEf7BEb72E919cf822Ed34f",
+    "Base": "0x827922686190790b37229fd06084350E74485b72",  # Aerodrome SlipStream
+}
+
+FACTORY_ADDRESSES = {
+    "Arbitrum": "0x1F98431c8aD98523631AE4a59f267346ea31F984",
+    "Base": "0x5e7BB104d84c7CB9B682AaC2F3d509f5F406809A",  # Aerodrome PoolFactory
 }
 
 POSITION_MANAGER_ABI = [
@@ -126,8 +131,6 @@ FACTORY_ABI = [
         "type": "function",
     }
 ]
-
-FACTORY_ADDRESS = "0x1F98431c8aD98523631AE4a59f267346ea31F984"
 
 # Известные стейблкоины для определения цены
 STABLECOINS = {
@@ -240,14 +243,30 @@ class PositionMonitor:
         decimals1 = await loop.run_in_executor(None, t1.functions.decimals().call)
 
         # Получаем текущую цену из пула
+        factory_addr = FACTORY_ADDRESSES.get(network, FACTORY_ADDRESSES["Arbitrum"])
         factory = w3.eth.contract(
-            address=Web3.to_checksum_address(FACTORY_ADDRESS),
+            address=Web3.to_checksum_address(factory_addr),
             abi=FACTORY_ABI
         )
-        pool_addr = await loop.run_in_executor(
-            None,
-            factory.functions.getPool(token0_addr, token1_addr, fee).call
-        )
+        # Aerodrome использует tickSpacing вместо fee в getPool
+        if network == "Base":
+            # Aerodrome PoolFactory: getPool(token0, token1, tickSpacing)
+            # tickSpacing для WETH/USDC 0.05% = 1
+            tick_spacing = fee  # в Aerodrome fee поле хранит tickSpacing
+            aero_factory_abi = [{"inputs":[{"internalType":"address","name":"tokenA","type":"address"},{"internalType":"address","name":"tokenB","type":"address"},{"internalType":"int24","name":"tickSpacing","type":"int24"}],"name":"getPool","outputs":[{"internalType":"address","name":"","type":"address"}],"stateMutability":"view","type":"function"}]
+            factory = w3.eth.contract(
+                address=Web3.to_checksum_address(factory_addr),
+                abi=aero_factory_abi
+            )
+            pool_addr = await loop.run_in_executor(
+                None,
+                factory.functions.getPool(token0_addr, token1_addr, tick_spacing).call
+            )
+        else:
+            pool_addr = await loop.run_in_executor(
+                None,
+                factory.functions.getPool(token0_addr, token1_addr, fee).call
+            )
 
         pool = w3.eth.contract(address=pool_addr, abi=POOL_ABI)
         slot0 = await loop.run_in_executor(None, pool.functions.slot0().call)
