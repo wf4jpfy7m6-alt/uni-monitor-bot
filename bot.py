@@ -63,7 +63,14 @@ async def status_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 async def analyze_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    msg = await update.message.reply_text("🧠 Анализирую позиции с помощью AI...")
+    # Поддержка как обычных сообщений, так и callback кнопок
+    if update.message:
+        chat_id = update.message.chat_id
+        msg = await update.message.reply_text("🧠 Анализирую позиции с помощью AI...")
+    else:
+        chat_id = update.callback_query.message.chat_id
+        msg = await update.callback_query.message.reply_text("🧠 Анализирую позиции с помощью AI...")
+
     positions = await monitor.get_all_positions()
 
     if not positions:
@@ -79,7 +86,7 @@ async def analyze_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
             f"{analysis}"
         )
         await context.bot.send_message(
-            chat_id=update.effective_chat.id,
+            chat_id=chat_id,
             text=text,
             parse_mode="Markdown"
         )

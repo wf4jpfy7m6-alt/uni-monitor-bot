@@ -18,7 +18,11 @@ RPC_URLS = {
     "Base": "https://mainnet.base.org",
 }
 
-POSITION_MANAGER_ADDRESS = "0xC36442b4a4522E871399CD717aBDD847Ab11FE88"  # одинаковый на всех сетях
+# Position Manager адреса (различаются по сетям)
+POSITION_MANAGER_ADDRESSES = {
+    "Arbitrum": "0xC36442b4a4522E871399CD717aBDD847Ab11FE88",
+    "Base": "0x03a520b32C04BF3bEEf7BEb72E919cf822Ed34f",
+}
 
 POSITION_MANAGER_ABI = [
     {
@@ -178,8 +182,9 @@ class PositionMonitor:
         """Получить позиции на конкретной сети через RPC."""
         loop = asyncio.get_event_loop()
         try:
+            pm_address = POSITION_MANAGER_ADDRESSES.get(network, POSITION_MANAGER_ADDRESSES["Arbitrum"])
             pm = w3.eth.contract(
-                address=Web3.to_checksum_address(POSITION_MANAGER_ADDRESS),
+                address=Web3.to_checksum_address(pm_address),
                 abi=POSITION_MANAGER_ABI
             )
 
