@@ -124,39 +124,35 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await analyze_command(query, context)
 
 
-async def auto_monitor(app):
-    """Фоновая задача — проверяет позиции и шлёт уведомления при выходе из диапазона."""
-    while True:
-        try:
-            positions = await get_all_positions()
-            for p in positions:
-                key = f"{p['network']}_{p['token_id']}"
-                was_in_range = position_states.get(key, True)
+async def monitor_job(context):
+    """Периодическая проверка позиций через job_queue."""
+    try:
+        positions = await get_all_positions()
+        for p in positions:
+            key = f"{p['network']}_{p['token_id']}"
+            was_in_range = position_states.get(key, True)
 
-                if was_in_range and not p["in_range"]:
-                    # Позиция только что вышла из диапазона
-                    analysis = await analyze_position(p)
-                    text = (
-                        f"🚨 *ПОЗИЦИЯ ВЫШЛА ИЗ ДИАПАЗОНА!*\n\n"
-                        f"*{p['token0']}/{p['token1']}* — {p['network']}\n"
-                        f"NFT #{p['token_id']}\n"
-                        f"Диапазон: ${p['price_lower']:,.0f} — ${p['price_upper']:,.0f}\n"
-                        f"Текущая цена: ${p['current_price']:,.2f}\n\n"
-                        f"{analysis}"
+            if was_in_range and not p["in_range"]:
+                analysis = await analyze_position(p)
+                text = (
+                    f"🚨 *ПОЗИЦИЯ ВЫШЛА ИЗ ДИАПАЗОНА!*\n\n"
+                    f"*{p['token0']}/{p['token1']}* — {p['network']}\n"
+                    f"NFT #{p['token_id']}\n"
+                    f"Диапазон: ${p['price_lower']:,.0f} — ${p['price_upper']:,.0f}\n"
+                    f"Текущая цена: ${p['current_price']:,.2f}\n\n"
+                    f"{analysis}"
+                )
+                if CHAT_ID:
+                    await context.bot.send_message(
+                        chat_id=CHAT_ID,
+                        text=text,
+                        parse_mode="Markdown"
                     )
-                    if CHAT_ID:
-                        await app.bot.send_message(
-                            chat_id=CHAT_ID,
-                            text=text,
-                            parse_mode="Markdown"
-                        )
 
-                position_states[key] = p["in_range"]
+            position_states[key] = p["in_range"]
 
-        except Exception as e:
-            logger.error(f"Ошибка в auto_monitor: {e}")
-
-        await asyncio.sleep(CHECK_INTERVAL)
+    except Exception as e:
+        logger.error(f"Ошибка в monitor_job: {e}")
 
 
 def main():
@@ -168,10 +164,7 @@ def main():
     app.add_handler(CommandHandler("help", help_command))
     app.add_handler(CallbackQueryHandler(button_handler))
 
-    async def post_init(application):
-        application.create_task(auto_monitor(application))
-
-    app.post_init = post_init
+    app.job_queue.run_repeating(monitor_job, interval=CHECK_INTERVAL, first=15)
 
     logger.info("Бот запущен...")
     app.run_polling(allowed_updates=Update.ALL_TYPES, drop_pending_updates=True)
@@ -179,5 +172,5 @@ def main():
 
 if __name__ == "__main__":
     import time
-    time.sleep(5)  # Даём время старому процессу завершиться
+    time.sleep(5)
     main()
