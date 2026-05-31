@@ -178,4 +178,6 @@ def main():
 
 
 if __name__ == "__main__":
+    import time
+    time.sleep(5)  # Даём время старому процессу завершиться
     main()
