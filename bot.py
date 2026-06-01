@@ -1,10 +1,8 @@
 import os
 import asyncio
 import logging
-import datetime
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import Application, CommandHandler, ContextTypes, CallbackQueryHandler
-from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from monitor import PositionMonitor
 from aerodrome_monitor import AerodromeMonitor
 from ai_analyst import analyze_position
@@ -23,13 +21,12 @@ CHECK_INTERVAL = int(os.getenv("CHECK_INTERVAL", "600"))
 monitor = PositionMonitor(WALLET_ADDRESS)
 aero_monitor = AerodromeMonitor(WALLET_ADDRESS)
 position_states = {}
-bot_app = None
 
 
 async def get_all_positions():
-    uni_positions = await monitor.get_all_positions()
-    aero_positions = await aero_monitor.get_positions()
-    return uni_positions + aero_positions
+    uni = await monitor.get_all_positions()
+    aero = await aero_monitor.get_positions()
+    return uni + aero
 
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -37,14 +34,12 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         [InlineKeyboardButton("📊 Статус позиций", callback_data="status")],
         [InlineKeyboardButton("🔍 Детальный анализ", callback_data="analyze")],
     ]
-    reply_markup = InlineKeyboardMarkup(keyboard)
     await update.message.reply_text(
         "👋 Привет! Я мониторю твои позиции Uniswap v3 на Arbitrum и Base.\n\n"
-        "Команды:\n"
-        "/status — текущее состояние позиций\n"
-        "/analyze — AI-анализ всех позиций\n"
+        "/status — текущее состояние\n"
+        "/analyze — AI-анализ\n"
         "/help — справка",
-        reply_markup=reply_markup
+        reply_markup=InlineKeyboardMarkup(keyboard)
     )
 
 
@@ -55,134 +50,112 @@ async def status_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         msg = await update.callback_query.message.reply_text("⏳ Загружаю позиции...")
 
     positions = await get_all_positions()
-
     if not positions:
         await msg.edit_text("😶 Активных позиций не найдено.")
         return
 
-    text = "📊 *Твои позиции Uniswap v3:*\n\n"
+    text = "📊 *Твои позиции:*\n\n"
     for p in positions:
-        status_emoji = "✅" if p["in_range"] else "🚨"
+        emoji = "✅" if p["in_range"] else "🚨"
         text += (
-            f"{status_emoji} *{p['token0']}/{p['token1']}* — {p['network']}\n"
+            f"{emoji} *{p['token0']}/{p['token1']}* — {p['network']}\n"
             f"   NFT #{p['token_id']}\n"
             f"   Диапазон: ${p['price_lower']:,.0f} — ${p['price_upper']:,.0f}\n"
-            f"   Текущая цена: ${p['current_price']:,.2f}\n"
+            f"   Цена: ${p['current_price']:,.2f}\n"
             f"   Статус: {'В диапазоне' if p['in_range'] else '❗ ВНЕ диапазона'}\n"
             f"   Стоимость: ~${p['value_usd']:,.0f}\n\n"
         )
-
     await msg.edit_text(text, parse_mode="Markdown")
 
 
 async def analyze_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if update.message:
         chat_id = update.message.chat_id
-        msg = await update.message.reply_text("🧠 Анализирую позиции с помощью AI...")
+        msg = await update.message.reply_text("🧠 Анализирую с помощью AI...")
     else:
         chat_id = update.callback_query.message.chat_id
-        msg = await update.callback_query.message.reply_text("🧠 Анализирую позиции с помощью AI...")
+        msg = await update.callback_query.message.reply_text("🧠 Анализирую с помощью AI...")
 
     positions = await get_all_positions()
-
     if not positions:
-        await msg.edit_text("😶 Активных позиций не найдено.")
+        await msg.edit_text("😶 Позиций не найдено.")
         return
 
     for p in positions:
         analysis = await analyze_position(p)
-        status_emoji = "✅" if p["in_range"] else "🚨"
-        text = (
-            f"{status_emoji} *{p['token0']}/{p['token1']}* — {p['network']}\n"
-            f"NFT #{p['token_id']}\n\n"
-            f"{analysis}"
-        )
+        emoji = "✅" if p["in_range"] else "🚨"
         await context.bot.send_message(
             chat_id=chat_id,
-            text=text,
+            text=f"{emoji} *{p['token0']}/{p['token1']}* — {p['network']}\nNFT #{p['token_id']}\n\n{analysis}",
             parse_mode="Markdown"
         )
-
     await msg.delete()
 
 
 async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(
-        "ℹ️ *Команды бота:*\n\n"
-        "/status — показать все позиции\n"
-        "/analyze — AI-анализ с рекомендациями\n"
-        "/help — эта справка\n\n"
-        f"🔄 Автопроверка каждые {CHECK_INTERVAL // 60} минут.\n"
-        f"📍 Кошелёк: `{WALLET_ADDRESS[:6]}...{WALLET_ADDRESS[-4:]}`",
+        f"ℹ️ *Команды:*\n\n"
+        f"/status — позиции\n"
+        f"/analyze — AI-анализ\n"
+        f"/help — справка\n\n"
+        f"🔄 Автопроверка каждые {CHECK_INTERVAL // 60} мин.",
         parse_mode="Markdown"
     )
 
 
 async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    query = update.callback_query
-    await query.answer()
-    if query.data == "status":
-        await status_command(query, context)
-    elif query.data == "analyze":
-        await analyze_command(query, context)
+    await update.callback_query.answer()
+    if update.callback_query.data == "status":
+        await status_command(update.callback_query, context)
+    elif update.callback_query.data == "analyze":
+        await analyze_command(update.callback_query, context)
 
 
-async def monitor_job():
-    """Периодическая проверка позиций."""
-    try:
-        positions = await get_all_positions()
-        for p in positions:
-            key = f"{p['network']}_{p['token_id']}"
-            was_in_range = position_states.get(key, True)
-
-            if was_in_range and not p["in_range"]:
-                analysis = await analyze_position(p)
-                text = (
-                    f"🚨 *ПОЗИЦИЯ ВЫШЛА ИЗ ДИАПАЗОНА!*\n\n"
-                    f"*{p['token0']}/{p['token1']}* — {p['network']}\n"
-                    f"NFT #{p['token_id']}\n"
-                    f"Диапазон: ${p['price_lower']:,.0f} — ${p['price_upper']:,.0f}\n"
-                    f"Текущая цена: ${p['current_price']:,.2f}\n\n"
-                    f"{analysis}"
-                )
-                if CHAT_ID:
-                    await bot_app.bot.send_message(
-                        chat_id=CHAT_ID,
-                        text=text,
-                        parse_mode="Markdown"
+async def auto_monitor(app):
+    """Фоновый мониторинг — запускается после старта приложения."""
+    await asyncio.sleep(15)  # даём боту запуститься
+    logger.info("Автомониторинг запущен")
+    while True:
+        try:
+            positions = await get_all_positions()
+            logger.info(f"Проверка: {len(positions)} позиций")
+            for p in positions:
+                key = f"{p['network']}_{p['token_id']}"
+                was_in_range = position_states.get(key, True)
+                if was_in_range and not p["in_range"]:
+                    analysis = await analyze_position(p)
+                    text = (
+                        f"🚨 *ПОЗИЦИЯ ВЫШЛА ИЗ ДИАПАЗОНА!*\n\n"
+                        f"*{p['token0']}/{p['token1']}* — {p['network']}\n"
+                        f"NFT #{p['token_id']}\n"
+                        f"Диапазон: ${p['price_lower']:,.0f} — ${p['price_upper']:,.0f}\n"
+                        f"Цена: ${p['current_price']:,.2f}\n\n{analysis}"
                     )
+                    if CHAT_ID:
+                        await app.bot.send_message(chat_id=CHAT_ID, text=text, parse_mode="Markdown")
+                position_states[key] = p["in_range"]
+        except Exception as e:
+            logger.error(f"Ошибка мониторинга: {e}")
+        await asyncio.sleep(CHECK_INTERVAL)
 
-            position_states[key] = p["in_range"]
-        logger.info(f"Проверка завершена: {len(positions)} позиций")
 
-    except Exception as e:
-        logger.error(f"Ошибка в monitor_job: {e}")
-
-
-def main():
-    global bot_app
+async def main():
     import time
     time.sleep(5)
 
-    bot_app = Application.builder().token(TELEGRAM_TOKEN).build()
+    app = Application.builder().token(TELEGRAM_TOKEN).build()
+    app.add_handler(CommandHandler("start", start))
+    app.add_handler(CommandHandler("status", status_command))
+    app.add_handler(CommandHandler("analyze", analyze_command))
+    app.add_handler(CommandHandler("help", help_command))
+    app.add_handler(CallbackQueryHandler(button_handler))
 
-    bot_app.add_handler(CommandHandler("start", start))
-    bot_app.add_handler(CommandHandler("status", status_command))
-    bot_app.add_handler(CommandHandler("analyze", analyze_command))
-    bot_app.add_handler(CommandHandler("help", help_command))
-    bot_app.add_handler(CallbackQueryHandler(button_handler))
-
-    scheduler = AsyncIOScheduler()
-    scheduler.add_job(
-        monitor_job, "interval",
-        seconds=CHECK_INTERVAL,
-        next_run_time=datetime.datetime.now() + datetime.timedelta(seconds=20)
-    )
-    scheduler.start()
-
-    logger.info("Бот запущен...")
-    bot_app.run_polling(allowed_updates=Update.ALL_TYPES, drop_pending_updates=True)
+    async with app:
+        await app.start()
+        await app.updater.start_polling(allowed_updates=Update.ALL_TYPES, drop_pending_updates=True)
+        logger.info("Бот запущен")
+        await auto_monitor(app)
 
 
 if __name__ == "__main__":
-    main()
+    asyncio.run(main())
