@@ -91,12 +91,14 @@ class AerodromeMonitor:
                 address=Web3.to_checksum_address(SUGAR_ADDRESS),
                 abi=SUGAR_ABI
             )
+            logger.info(f"Aerodrome: вызываю Sugar.positions для {self.wallet}")
             raw = await loop.run_in_executor(
                 None,
                 sugar.functions.positions(
                     100, 0, self.wallet
                 ).call
             )
+            logger.info(f"Aerodrome: Sugar вернул {len(raw)} позиций")
 
             positions = []
             for p in raw:
