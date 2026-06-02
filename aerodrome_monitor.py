@@ -7,24 +7,25 @@ logger = logging.getLogger(__name__)
 BASE_RPC = "https://mainnet.base.org"
 
 # Aerodrome Sugar v3 — читает все позиции включая застейканные
-SUGAR_ADDRESS = "0x68c19e13618c41158fe4baba1b8fb3a9c74bdb0a"
+SUGAR_ADDRESS = "0xa7638d351040e2adce3eca81b07132c5df4b99bd"
 CL_FACTORY = "0x5e7BB104d84c7CB9B682AaC2F3d509f5F406809A"
 
 SUGAR_ABI = [
     {
-        "name": "positions",
+        "name": "positionsByFactory",
         "type": "function",
         "stateMutability": "view",
         "inputs": [
             {"name": "_limit", "type": "uint256"},
             {"name": "_offset", "type": "uint256"},
             {"name": "_account", "type": "address"},
+            {"name": "_factory", "type": "address"},
         ],
         "outputs": [{"name": "", "type": "tuple[]", "components": [
             {"name": "id", "type": "uint256"},
             {"name": "lp", "type": "address"},
-            {"name": "liquidity", "type": "uint128"},
-            {"name": "staked", "type": "uint128"},
+            {"name": "liquidity", "type": "uint256"},
+            {"name": "staked", "type": "uint256"},
             {"name": "amount0", "type": "uint256"},
             {"name": "amount1", "type": "uint256"},
             {"name": "staked0", "type": "uint256"},
@@ -91,11 +92,12 @@ class AerodromeMonitor:
                 address=Web3.to_checksum_address(SUGAR_ADDRESS),
                 abi=SUGAR_ABI
             )
-            logger.info(f"Aerodrome: вызываю Sugar.positions для {self.wallet}")
+            logger.info(f"Aerodrome: вызываю Sugar.positionsByFactory для {self.wallet}")
             raw = await loop.run_in_executor(
                 None,
-                sugar.functions.positions(
-                    100, 0, self.wallet
+                sugar.functions.positionsByFactory(
+                    100, 0, self.wallet,
+                    Web3.to_checksum_address(CL_FACTORY)
                 ).call
             )
             logger.info(f"Aerodrome: Sugar вернул {len(raw)} позиций")
