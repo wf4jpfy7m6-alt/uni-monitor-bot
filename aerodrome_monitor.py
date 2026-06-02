@@ -12,14 +12,13 @@ CL_FACTORY = "0x5e7BB104d84c7CB9B682AaC2F3d509f5F406809A"
 
 SUGAR_ABI = [
     {
-        "name": "positionsByFactory",
+        "name": "positions",
         "type": "function",
         "stateMutability": "view",
         "inputs": [
             {"name": "_limit", "type": "uint256"},
             {"name": "_offset", "type": "uint256"},
             {"name": "_account", "type": "address"},
-            {"name": "_factory", "type": "address"},
         ],
         "outputs": [{"name": "", "type": "tuple[]", "components": [
             {"name": "id", "type": "uint256"},
@@ -94,10 +93,8 @@ class AerodromeMonitor:
             )
             raw = await loop.run_in_executor(
                 None,
-                sugar.functions.positionsByFactory(
-                    100, 0,
-                    self.wallet,
-                    Web3.to_checksum_address(CL_FACTORY)
+                sugar.functions.positions(
+                    100, 0, self.wallet
                 ).call
             )
 
