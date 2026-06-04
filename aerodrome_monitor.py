@@ -1,44 +1,81 @@
-import asyncio
-import logging
+"""
+aerodrome_monitor.py
+Мониторинг застейканной позиции Aerodrome (Base) WETH/USDC в Gauge.
+Запуск: python aerodrome_monitor.py
+"""
+
+import math
 from web3 import Web3
 
-logger = logging.getLogger(__name__)
+# ── Конфигурация ──────────────────────────────────────────────────────────────
 
-BASE_RPC = "https://mainnet.base.org"
+RPC_URL = "https://mainnet.base.org"          # публичный RPC Base
+WALLET  = Web3.to_checksum_address("0x1074520dd10d6bad7d760f1762c435f658a8f21a")
 
-# Aerodrome Sugar v3 — читает все позиции включая застейканные
-SUGAR_ADDRESS = "0xa7638d351040e2adce3eca81b07132c5df4b99bd"
-CL_FACTORY = "0x5e7BB104d84c7CB9B682AaC2F3d509f5F406809A"
+# NPM Aerodrome SlipStream
+NPM_ADDRESS = Web3.to_checksum_address("0x827922686190790b37229fd06084350E74485b72")
 
-SUGAR_ABI = [
+# Пул WETH/USDC CL100
+POOL_ADDRESS = Web3.to_checksum_address("0xb2cc224c1c9feE385f8ad6a55b4d94E92359DC59")
+
+# Официальный Gauge CL100-WETH/USDC на Base (Aerodrome Finance)
+# Источник: basescan.org — "Aerodrome Finance: CL100-WETH/USDC Pool Gauge"
+# Если позиция не найдена — скрипт проверит резервный адрес
+GAUGE_CANDIDATES = [
+    Web3.to_checksum_address("0x1E012d2A200B9c7e0DDc968Eba14e2E7C332A04A"),  # ✅ из NFT transfers (BaseScan)
+    Web3.to_checksum_address("0xF33a96b5932D9E9B9A0eDA447AbD8C9d48d2e0c8"),  # резервный
+]
+
+# Токены
+WETH_ADDRESS = Web3.to_checksum_address("0x4200000000000000000000000000000000000006")
+USDC_ADDRESS = Web3.to_checksum_address("0x833589fcd6edb6e08f4c7c32d4f71b54bda02913")
+AERO_ADDRESS = Web3.to_checksum_address("0x940181a94A35A4569E4529A3CDfB74e38FD98631")
+
+# ── ABI (минимальные) ─────────────────────────────────────────────────────────
+
+GAUGE_ABI = [
+    # stakedValues(address owner) → uint256[]
     {
-        "name": "positionsByFactory",
-        "type": "function",
+        "inputs": [{"internalType": "address", "name": "depositor", "type": "address"}],
+        "name": "stakedValues",
+        "outputs": [{"internalType": "uint256[]", "name": "", "type": "uint256[]"}],
         "stateMutability": "view",
+        "type": "function",
+    },
+    # earned(address token, uint256 tokenId) → uint256
+    {
         "inputs": [
-            {"name": "_limit", "type": "uint256"},
-            {"name": "_offset", "type": "uint256"},
-            {"name": "_account", "type": "address"},
-            {"name": "_factory", "type": "address"},
+            {"internalType": "address", "name": "token", "type": "address"},
+            {"internalType": "uint256", "name": "tokenId", "type": "uint256"},
         ],
-        "outputs": [{"name": "", "type": "tuple[]", "components": [
-            {"name": "id", "type": "uint256"},
-            {"name": "lp", "type": "address"},
-            {"name": "liquidity", "type": "uint256"},
-            {"name": "staked", "type": "uint256"},
-            {"name": "amount0", "type": "uint256"},
-            {"name": "amount1", "type": "uint256"},
-            {"name": "staked0", "type": "uint256"},
-            {"name": "staked1", "type": "uint256"},
-            {"name": "unstaked_earned0", "type": "uint256"},
-            {"name": "unstaked_earned1", "type": "uint256"},
-            {"name": "emissions_earned", "type": "uint256"},
-            {"name": "tick_lower", "type": "int24"},
-            {"name": "tick_upper", "type": "int24"},
-            {"name": "sqrt_ratio_lower", "type": "uint160"},
-            {"name": "sqrt_ratio_upper", "type": "uint160"},
-        ]}],
-    }
+        "name": "earned",
+        "outputs": [{"internalType": "uint256", "name": "", "type": "uint256"}],
+        "stateMutability": "view",
+        "type": "function",
+    },
+]
+
+NPM_ABI = [
+    {
+        "inputs": [{"internalType": "uint256", "name": "tokenId", "type": "uint256"}],
+        "name": "positions",
+        "outputs": [
+            {"internalType": "uint96",  "name": "nonce",             "type": "uint96"},
+            {"internalType": "address", "name": "operator",          "type": "address"},
+            {"internalType": "address", "name": "token0",            "type": "address"},
+            {"internalType": "address", "name": "token1",            "type": "address"},
+            {"internalType": "int24",   "name": "tickSpacing",       "type": "int24"},
+            {"internalType": "int24",   "name": "tickLower",         "type": "int24"},
+            {"internalType": "int24",   "name": "tickUpper",         "type": "int24"},
+            {"internalType": "uint128", "name": "liquidity",         "type": "uint128"},
+            {"internalType": "uint256", "name": "feeGrowthInside0LastX128", "type": "uint256"},
+            {"internalType": "uint256", "name": "feeGrowthInside1LastX128", "type": "uint256"},
+            {"internalType": "uint128", "name": "tokensOwed0",       "type": "uint128"},
+            {"internalType": "uint128", "name": "tokensOwed1",       "type": "uint128"},
+        ],
+        "stateMutability": "view",
+        "type": "function",
+    },
 ]
 
 POOL_ABI = [
@@ -46,150 +83,165 @@ POOL_ABI = [
         "inputs": [],
         "name": "slot0",
         "outputs": [
-            {"internalType": "uint160", "name": "sqrtPriceX96", "type": "uint160"},
-            {"internalType": "int24", "name": "tick", "type": "int24"},
-            {"internalType": "uint16", "name": "", "type": "uint16"},
-            {"internalType": "uint16", "name": "", "type": "uint16"},
-            {"internalType": "uint16", "name": "", "type": "uint16"},
-            {"internalType": "bool", "name": "unlocked", "type": "bool"},
+            {"internalType": "uint160", "name": "sqrtPriceX96",   "type": "uint160"},
+            {"internalType": "int24",   "name": "tick",            "type": "int24"},
+            {"internalType": "uint16",  "name": "observationIndex","type": "uint16"},
+            {"internalType": "uint16",  "name": "observationCardinality","type": "uint16"},
+            {"internalType": "uint16",  "name": "observationCardinalityNext","type": "uint16"},
+            {"internalType": "bool",    "name": "unlocked",        "type": "bool"},
         ],
-        "stateMutability": "view",
-        "type": "function",
-    },
-    {
-        "inputs": [],
-        "name": "token0",
-        "outputs": [{"internalType": "address", "name": "", "type": "address"}],
-        "stateMutability": "view",
-        "type": "function",
-    },
-    {
-        "inputs": [],
-        "name": "token1",
-        "outputs": [{"internalType": "address", "name": "", "type": "address"}],
         "stateMutability": "view",
         "type": "function",
     },
 ]
 
 ERC20_ABI = [
-    {"inputs": [], "name": "symbol", "outputs": [{"type": "string"}], "stateMutability": "view", "type": "function"},
-    {"inputs": [], "name": "decimals", "outputs": [{"type": "uint8"}], "stateMutability": "view", "type": "function"},
+    {
+        "inputs": [{"internalType": "address", "name": "account", "type": "address"}],
+        "name": "balanceOf",
+        "outputs": [{"internalType": "uint256", "name": "", "type": "uint256"}],
+        "stateMutability": "view",
+        "type": "function",
+    },
 ]
 
-STABLECOINS = {"USDC", "USDT", "DAI", "USDbC", "USDBC", "USDC.e"}
+# ── Математика Uniswap v3 ─────────────────────────────────────────────────────
+
+def tick_to_price(tick: int, token0_decimals: int = 18, token1_decimals: int = 6) -> float:
+    """
+    Цена token1 в единицах token0.
+    Для WETH(18)/USDC(6): tick → цена ETH в USDC.
+    """
+    raw = 1.0001 ** tick
+    adjusted = raw * (10 ** token0_decimals) / (10 ** token1_decimals)
+    # WETH=token0, USDC=token1 → price = USDC per WETH
+    return adjusted
 
 
-class AerodromeMonitor:
-    def __init__(self, wallet_address: str):
-        self.wallet = Web3.to_checksum_address(wallet_address)
-        self.w3 = Web3(Web3.HTTPProvider(BASE_RPC))
+def liquidity_to_amounts(
+    liquidity: int,
+    sqrt_price_x96: int,
+    tick_lower: int,
+    tick_upper: int,
+    token0_decimals: int = 18,
+    token1_decimals: int = 6,
+) -> tuple[float, float]:
+    """
+    Рассчитывает реальные amount0/amount1 из liquidity.
+    """
+    Q96 = 2**96
+    sqrt_price = sqrt_price_x96 / Q96
 
-    async def get_positions(self) -> list:
-        loop = asyncio.get_event_loop()
+    sqrt_lower = math.sqrt(1.0001 ** tick_lower)
+    sqrt_upper = math.sqrt(1.0001 ** tick_upper)
+
+    current_tick_approx = math.log(sqrt_price ** 2) / math.log(1.0001)
+
+    if current_tick_approx <= tick_lower:
+        # Вся ликвидность в token0
+        amount0 = liquidity * (1 / sqrt_lower - 1 / sqrt_upper)
+        amount1 = 0.0
+    elif current_tick_approx >= tick_upper:
+        # Вся ликвидность в token1
+        amount0 = 0.0
+        amount1 = liquidity * (sqrt_upper - sqrt_lower)
+    else:
+        amount0 = liquidity * (1 / sqrt_price - 1 / sqrt_upper)
+        amount1 = liquidity * (sqrt_price - sqrt_lower)
+
+    amount0 /= 10 ** token0_decimals
+    amount1 /= 10 ** token1_decimals
+    return amount0, amount1
+
+
+# ── Основная логика ───────────────────────────────────────────────────────────
+
+def main():
+    w3 = Web3(Web3.HTTPProvider(RPC_URL))
+    if not w3.is_connected():
+        print("❌  Не удалось подключиться к Base RPC")
+        return
+
+    print(f"✅  Подключено к Base, блок #{w3.eth.block_number}\n")
+    print(f"👛  Кошелёк: {WALLET}\n")
+
+    # 1. Ищем Gauge со стейком
+    gauge = None
+    token_ids = []
+
+    for candidate in GAUGE_CANDIDATES:
+        c = w3.eth.contract(address=candidate, abi=GAUGE_ABI)
         try:
-            sugar = self.w3.eth.contract(
-                address=Web3.to_checksum_address(SUGAR_ADDRESS),
-                abi=SUGAR_ABI
-            )
-            logger.info(f"Aerodrome: вызываю Sugar.positionsByFactory для {self.wallet}")
-            raw = await loop.run_in_executor(
-                None,
-                sugar.functions.positionsByFactory(
-                    100, 0, self.wallet,
-                    Web3.to_checksum_address(CL_FACTORY)
-                ).call
-            )
-            logger.info(f"Aerodrome: Sugar вернул {len(raw)} позиций")
-
-            positions = []
-            for p in raw:
-                try:
-                    pos = await self._parse(p, loop)
-                    if pos:
-                        positions.append(pos)
-                except Exception as e:
-                    logger.error(f"Aerodrome parse error: {e}")
-
-            return positions
-
+            ids = c.functions.stakedValues(WALLET).call()
+            if ids:
+                gauge = c
+                token_ids = ids
+                print(f"📍  Gauge найден: {candidate}")
+                print(f"🪙  Застейканные tokenId: {token_ids}\n")
+                break
+            else:
+                print(f"⚪  Gauge {candidate}: нет позиций")
         except Exception as e:
-            logger.error(f"Aerodrome Sugar error: {e}")
-            return []
+            print(f"⚠️   Gauge {candidate}: ошибка — {e}")
 
-    async def _parse(self, p, loop) -> dict:
-        liquidity = p[2] + p[3]  # liquidity + staked
-        if liquidity == 0:
-            return None
+    if not gauge:
+        print("❌  Gauge не найден. Проверь адреса GAUGE_CANDIDATES.")
+        return
 
-        pool_addr = p[1]
-        tick_lower = p[11]
-        tick_upper = p[12]
+    # 2. slot0 пула
+    pool = w3.eth.contract(address=POOL_ADDRESS, abi=POOL_ABI)
+    slot0 = pool.functions.slot0().call()
+    sqrt_price_x96 = slot0[0]
+    current_tick   = slot0[1]
 
-        pool = self.w3.eth.contract(address=Web3.to_checksum_address(pool_addr), abi=POOL_ABI)
+    eth_price_usdc = tick_to_price(current_tick)
+    print(f"📊  Текущий tick: {current_tick}")
+    print(f"💲  ETH цена: ${eth_price_usdc:,.2f}\n")
 
-        token0_addr = await loop.run_in_executor(None, pool.functions.token0().call)
-        token1_addr = await loop.run_in_executor(None, pool.functions.token1().call)
-        slot0 = await loop.run_in_executor(None, pool.functions.slot0().call)
-        current_tick = slot0[1]
-        sqrt_price_x96 = slot0[0]
+    # 3. Каждая позиция
+    npm = w3.eth.contract(address=NPM_ADDRESS, abi=NPM_ABI)
 
-        t0 = self.w3.eth.contract(address=token0_addr, abi=ERC20_ABI)
-        t1 = self.w3.eth.contract(address=token1_addr, abi=ERC20_ABI)
-        symbol0 = await loop.run_in_executor(None, t0.functions.symbol().call)
-        symbol1 = await loop.run_in_executor(None, t1.functions.symbol().call)
-        decimals0 = await loop.run_in_executor(None, t0.functions.decimals().call)
-        decimals1 = await loop.run_in_executor(None, t1.functions.decimals().call)
+    for token_id in token_ids:
+        print(f"─── Позиция #{token_id} ───────────────────────────────")
+        pos = npm.functions.positions(token_id).call()
 
-        def tick_to_price(tick):
-            price = 1.0001 ** tick
-            return price * (10 ** decimals0) / (10 ** decimals1)
+        tick_lower  = pos[5]
+        tick_upper  = pos[6]
+        liquidity   = pos[7]
 
-        current_price_raw = (sqrt_price_x96 / (2 ** 96)) ** 2 * (10 ** decimals0) / (10 ** decimals1)
         price_lower = tick_to_price(tick_lower)
         price_upper = tick_to_price(tick_upper)
 
-        # Определяем читаемое отображение цены
-        if symbol1 in STABLECOINS:
-            display_price = current_price_raw
-            display_lower = price_lower
-            display_upper = price_upper
-        elif symbol0 in STABLECOINS:
-            display_price = 1 / current_price_raw if current_price_raw > 0 else 0
-            display_lower = 1 / price_upper if price_upper > 0 else 0
-            display_upper = 1 / price_lower if price_lower > 0 else 0
-        else:
-            display_price = current_price_raw
-            display_lower = price_lower
-            display_upper = price_upper
-
         in_range = tick_lower <= current_tick <= tick_upper
 
-        # Стоимость через amount0 + amount1 из Sugar (уже с учётом стейкинга)
-        total0 = (p[4] + p[6]) / (10 ** decimals0)  # amount0 + staked0
-        total1 = (p[5] + p[7]) / (10 ** decimals1)  # amount1 + staked1
+        amount0, amount1 = liquidity_to_amounts(
+            liquidity, sqrt_price_x96, tick_lower, tick_upper
+        )
 
-        if symbol1 in STABLECOINS:
-            value_usd = total0 * display_price + total1
-        elif symbol0 in STABLECOINS:
-            value_usd = total0 + total1 * display_price
-        else:
-            value_usd = total0 * display_price + total1
+        total_usd = amount0 * eth_price_usdc + amount1
 
-        return {
-            "token_id": p[0],
-            "network": "Base (Aerodrome)",
-            "token0": symbol0,
-            "token1": symbol1,
-            "fee": 0.05,
-            "tick_lower": tick_lower,
-            "tick_upper": tick_upper,
-            "current_tick": current_tick,
-            "liquidity": liquidity,
-            "current_price": display_price,
-            "price_lower": display_lower,
-            "price_upper": display_upper,
-            "in_range": in_range,
-            "value_usd": value_usd,
-            "pool_address": pool_addr,
-        }
+        print(f"  Liquidity : {liquidity}")
+        print(f"  Диапазон  : ${price_lower:,.2f} — ${price_upper:,.2f}")
+        print(f"  В диапазоне: {'✅ ДА' if in_range else '❌ НЕТ (вне диапазона)'}")
+        print(f"  WETH      : {amount0:.6f} ETH  (≈${amount0 * eth_price_usdc:,.2f})")
+        print(f"  USDC      : {amount1:,.2f} USDC")
+        print(f"  Итого USD : ≈${total_usd:,.2f}")
+
+        # 4. Награды AERO
+        try:
+            earned_raw = gauge.functions.earned(AERO_ADDRESS, token_id).call()
+            earned_aero = earned_raw / 1e18
+            print(f"  AERO награды: {earned_aero:.4f} AERO")
+        except Exception as e:
+            print(f"  AERO награды: ошибка — {e}")
+
+        print()
+
+    # 5. Баланс AERO в кошельке
+    aero = w3.eth.contract(address=AERO_ADDRESS, abi=ERC20_ABI)
+    aero_balance = aero.functions.balanceOf(WALLET).call() / 1e18
+    print(f"💰  AERO в кошельке: {aero_balance:.4f} AERO")
+
+
+if __name__ == "__main__":
+    main()
