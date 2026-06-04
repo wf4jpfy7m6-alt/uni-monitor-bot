@@ -87,7 +87,6 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 async def status_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    # Работаем корректно и с текстом, и с кнопками под меню
     query = update.callback_query
     if query:
         msg = await query.message.reply_text("⏳ Опрашиваю смарт-контракты и собираю метрики...")
@@ -96,7 +95,10 @@ async def status_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     positions = await get_all_positions()
     if not positions:
-        await msg.edit_text("😶 Активных LP-позиций в пулах не обнаружено.")
+        if query:
+            await msg.edit_text("😶 Активных LP-позиций в пулах не обнаружено.")
+        else:
+            await msg.reply_text("😶 Активных LP-позиций в пулах не обнаружено.")
         return
 
     text = "📊 *Текущий статус твоих позиций:*\n\n"
@@ -115,17 +117,12 @@ async def status_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
             f"   Текущая стоимость: ~${p['value_usd']:,.0f}\n"
         )
         
-        # Интегрируем автоматические рекомендации прямо в отчет статуса
         if not p["in_range"]:
             text += generate_fallback_recommendation(p)
             
         text += "\n" + "═" * 15 + "\n\n"
 
-    # Безопасно редактируем сообщение, отправляя финальный отчет
-    if query:
-        await msg.edit_text(text, parse_mode="Markdown")
-    else:
-        await msg.edit_text(text, parse_mode="Markdown")
+    await msg.edit_text(text, parse_mode="Markdown")
 
 
 async def analyze_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -146,7 +143,7 @@ async def analyze_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         try:
             analysis = await analyze_position(p)
         except Exception as e:
-            logger.error(f"Ошибка работы AI ИИ-аналитика: {e}")
+            logger.error(f"Ошибка работы AI аналитика: {e}")
             analysis = "⚠️ Не удалось получить ответ от ИИ-модели. Воспользуйтесь рекомендациями из /status."
 
         emoji = "✅" if p["in_range"] else "🚨"
@@ -166,7 +163,7 @@ async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         f"/help — Данное меню.\n\n"
         f"🔄 *Фоновый мониторинг:* Активен.\n"
         f"Автопроверка пулов выполняется каждые {CHECK_INTERVAL // 60} минут. "
-        f"В случае вылета цены из коридора, бот незамедлительно пришлет уведомление сюда.",
+        f"Бот автоматически пришлет уведомление как при вылете цены из коридора, так и при её успешном возвращении обратно.",
         parse_mode="Markdown"
     )
 
@@ -193,7 +190,7 @@ async def auto_monitor(app):
                 key = f"{p['network']}_{p['token_id']}"
                 was_in_range = position_states.get(key, True)
                 
-                # Если позиция была в коридоре, а теперь вылетела
+                # 🚨 СЦЕНАРИЙ 1: Позиция ВЫЛЕТЕЛА из диапазона
                 if was_in_range and not p["in_range"]:
                     try:
                         analysis = await analyze_position(p)
@@ -212,7 +209,21 @@ async def auto_monitor(app):
                     if CHAT_ID:
                         await app.bot.send_message(chat_id=CHAT_ID, text=text, parse_mode="Markdown")
                 
-                # Сохраняем текущее состояние
+                # 🎉 СЦЕНАРИЙ 2: Позиция успешно ВЕРНУЛАСЬ в диапазон коридора
+                elif not was_in_range and p["in_range"]:
+                    text = (
+                        f"🎉 *ОТЛИЧНЫЕ НОВОСТИ: ПОЗИЦИЯ ВЕРНУЛАСЬ В ДИАПАЗОН!*\n\n"
+                        f"✅ *{p['token0']}/{p['token1']}* — _{p['network']}_\n"
+                        f"NFT #{p['token_id']}\n"
+                        f"Текущая цена ETH: ${p['current_price']:,.2f}\n"
+                        f"Коридор доходности: ${p['price_lower']:,.0f} — ${p['price_upper']:,.0f}\n\n"
+                        f"📈 Капитал снова в работе. Позиция возобновила сбор торговых комиссий в реальном времени!"
+                    )
+                    
+                    if CHAT_ID:
+                        await app.bot.send_message(chat_id=CHAT_ID, text=text, parse_mode="Markdown")
+                
+                # Сохраняем текущее состояние для следующего шага сравнения
                 position_states[key] = p["in_range"]
                 
         except Exception as e:
@@ -226,7 +237,7 @@ async def main():
         logger.critical("Переменная среды TELEGRAM_TOKEN отсутствует! Бот остановлен.")
         return
 
-    # Строим приложение с автоматическим сбросом зависших обновлений (drop_pending_updates)
+    # Инициализация приложения с автоматическим сбросом зависших обновлений (drop_pending_updates)
     app = Application.builder().token(TELEGRAM_TOKEN).build()
     
     # Регистрация обработчиков команд
@@ -236,17 +247,16 @@ async def main():
     app.add_handler(CommandHandler("help", help_command))
     app.add_handler(CallbackQueryHandler(button_handler))
 
-    # Безопасный запуск пуллинга, исключающий появление конфликтов нескольких копий
+    # Безопасный запуск пуллинга, полностью исключающий дубли сессий на платных тарифах
     async with app:
         await app.start()
-        # drop_pending_updates=True гарантирует, что старые зависшие "зомби" сессии очистятся
         await app.updater.start_polling(
             allowed_updates=Update.ALL_TYPES, 
             drop_pending_updates=True
         )
         logger.info("DeFi Бот успешно запущен и слушает команды.")
         
-        # Запускаем бесконечный цикл фоновой проверки пулов
+        # Запуск фонового бесконечного цикла проверок
         await auto_monitor(app)
 
 
