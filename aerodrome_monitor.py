@@ -1,6 +1,6 @@
 """
 aerodrome_monitor.py
-Мониторинг застейканной позиции Aerodrome (Base) WETH/USDC в Gauge для Telegram-бота.
+Мониторинг застейканной позиции Aerodrome (Base) WETH/USDC через NPM и Gauge.
 """
 
 import math
@@ -12,31 +12,7 @@ RPC_URL = "https://mainnet.base.org"
 NPM_ADDRESS = Web3.to_checksum_address("0x827922686190790b37229fd06084350E74485b72")
 POOL_ADDRESS = Web3.to_checksum_address("0xb2cc224c1c9fee385f8ad6a55b4d94e92359dc59")
 
-WETH_ADDRESS = Web3.to_checksum_address("0x4200000000000000000000000000000000000006")
-USDC_ADDRESS = Web3.to_checksum_address("0x833589fcd6edb6e08f4c7c32d4f71b54bda02913")
-AERO_ADDRESS = Web3.to_checksum_address("0x940181a94a35a4569e4529a3cdfb74e38fd98631")
-
-# ── ABI ───────────────────────────────────────────────────────────────────────
-GAUGE_ABI = [
-    {
-        "inputs": [{"internalType": "address", "name": "depositor", "type": "address"}],
-        "name": "stakedValues",
-        "outputs": [{"internalType": "uint256[]", "name": "", "type": "uint256[]"}],
-        "stateMutability": "view",
-        "type": "function",
-    },
-    {
-        "inputs": [
-            {"internalType": "address", "name": "token", "type": "address"},
-            {"internalType": "uint256", "name": "tokenId", "type": "uint256"},
-        ],
-        "name": "earned",
-        "outputs": [{"internalType": "uint256", "name": "", "type": "uint256"}],
-        "stateMutability": "view",
-        "type": "function",
-    },
-]
-
+# ── ABI контрактов ────────────────────────────────────────────────────────────
 NPM_ABI = [
     {
         "inputs": [{"internalType": "uint256", "name": "tokenId", "type": "uint256"}],
@@ -58,6 +34,23 @@ NPM_ABI = [
         "stateMutability": "view",
         "type": "function",
     },
+    {
+        "inputs": [{"internalType": "address", "name": "owner", "type": "address"}],
+        "name": "balanceOf",
+        "outputs": [{"internalType": "uint256", "name": "", "type": "uint256"}],
+        "stateMutability": "view",
+        "type": "function",
+    },
+    {
+        "inputs": [
+            {"internalType": "address", "name": "owner", "type": "address"},
+            {"internalType": "uint256", "name": "index", "type": "uint256"}
+        ],
+        "name": "tokenOfOwnerByIndex",
+        "outputs": [{"internalType": "uint256", "name": "", "type": "uint256"}],
+        "stateMutability": "view",
+        "type": "function",
+    }
 ]
 
 POOL_ABI = [
@@ -77,60 +70,82 @@ POOL_ABI = [
     },
 ]
 
-# ── Вспомогательная математика ────────────────────────────────────────────────
+# ── Математические функции ────────────────────────────────────────────────────
 def tick_to_price(tick: int, token0_decimals: int = 18, token1_decimals: int = 6) -> float:
-    raw = 1.0001 ** tick
-    return raw * (10 ** token0_decimals) / (10 ** token1_decimals)
+    try:
+        raw = 1.0001 ** tick
+        return raw * (10 ** token0_decimals) / (10 ** token1_decimals)
+    except Exception:
+        return 0.0
 
 def liquidity_to_amounts(liquidity: int, sqrt_price_x96: int, tick_lower: int, tick_upper: int) -> tuple[float, float]:
-    Q96 = 2**96
-    sqrt_price = sqrt_price_x96 / Q96
-    sqrt_lower = math.sqrt(1.0001 ** tick_lower)
-    sqrt_upper = math.sqrt(1.0001 ** tick_upper)
-    current_tick_approx = math.log(sqrt_price ** 2) / math.log(1.0001)
+    try:
+        Q96 = 2**96
+        sqrt_price = sqrt_price_x96 / Q96
+        sqrt_lower = math.sqrt(1.0001 ** tick_lower)
+        sqrt_upper = math.sqrt(1.0001 ** tick_upper)
+        current_tick_approx = math.log(sqrt_price ** 2) / math.log(1.0001)
 
-    if current_tick_approx <= tick_lower:
-        amount0 = liquidity * (1 / sqrt_lower - 1 / sqrt_upper)
-        amount1 = 0.0
-    elif current_tick_approx >= tick_upper:
-        amount0 = 0.0
-        amount1 = liquidity * (sqrt_upper - sqrt_lower)
-    else:
-        amount0 = liquidity * (1 / sqrt_price - 1 / sqrt_upper)
-        amount1 = liquidity * (sqrt_price - sqrt_lower)
+        if current_tick_approx <= tick_lower:
+            amount0 = liquidity * (1 / sqrt_lower - 1 / sqrt_upper)
+            amount1 = 0.0
+        elif current_tick_approx >= tick_upper:
+            amount0 = 0.0
+            amount1 = liquidity * (sqrt_upper - sqrt_lower)
+        else:
+            amount0 = liquidity * (1 / sqrt_price - 1 / sqrt_upper)
+            amount1 = liquidity * (sqrt_price - sqrt_lower)
 
-    return amount0 / 1e18, amount1 / 1e6
+        return amount0 / 1e18, amount1 / 1e6
+    except Exception:
+        return 0.0, 0.0
 
 
-# ── Основной Класс Монитора ───────────────────────────────────────────────────
+# ── Класс Монитора ────────────────────────────────────────────────────────────
 class AerodromeMonitor:
     def __init__(self, wallet_address: str, gauge_address: str):
         self.w3 = Web3(Web3.HTTPProvider(RPC_URL))
         self.wallet = Web3.to_checksum_address(wallet_address)
         self.gauge_address = Web3.to_checksum_address(gauge_address)
         
-        self.gauge_contract = self.w3.eth.contract(address=self.gauge_address, abi=GAUGE_ABI)
         self.pool_contract = self.w3.eth.contract(address=POOL_ADDRESS, abi=POOL_ABI)
         self.npm_contract = self.w3.eth.contract(address=NPM_ADDRESS, abi=NPM_ABI)
 
     async def get_positions(self) -> list:
-        """Собирает данные о позициях для интеграции с ботом."""
         return await asyncio.to_thread(self._get_positions_sync)
 
     def _get_positions_sync(self) -> list:
         if not self.w3.is_connected():
-            print("🚨 Aerodrome: Web3 не подключен к RPC!")
             return []
 
+        token_ids = []
+        
+        # Шаг 1: Сначала проверяем, лежит ли NFT на самом кошельке
         try:
-            target_wallet = Web3.to_checksum_address(self.wallet)
-            token_ids = self.gauge_contract.functions.stakedValues(target_wallet).call()
-            print(f"🔍 Aerodrome: Найдено токенов в Gauge для кошелька {target_wallet}: {token_ids}")
-            if not token_ids:
-                return []
+            balance = self.npm_contract.functions.balanceOf(self.wallet).call()
+            for i in range(balance):
+                t_id = self.npm_contract.functions.tokenOfOwnerByIndex(self.wallet, i).call()
+                token_ids.append(t_id)
         except Exception as e:
-            print(f"🚨 Aerodrome Ошибка stakedValues: {e}")
-            return []
+            print(f"⚠️ Ошибка проверки баланса кошелька: {e}")
+
+        # Шаг 2: Проверяем, застейкан ли NFT в самом контракте Gauge (он становится владельцем на NPM)
+        try:
+            gauge_balance = self.npm_contract.functions.balanceOf(self.gauge_address).call()
+            for i in range(gauge_balance):
+                t_id = self.npm_contract.functions.tokenOfOwnerByIndex(self.gauge_address, i).call()
+                # Так как токенов в Gauge много, мы проверяем вашу конкретную известную позицию
+                if t_id == 872965:  
+                    token_ids.append(t_id)
+        except Exception as e:
+            print(f"⚠️ Ошибка проверки баланса Gauge контракта: {e}")
+
+        # Если не нашли на кошельке и в общем списке, жестко добавляем ваш ID для принудительного трекинга
+        if 872965 not in token_ids:
+            token_ids.append(872965)
+
+        # Очищаем от дубликатов
+        token_ids = list(set(token_ids))
 
         try:
             slot0 = self.pool_contract.functions.slot0().call()
@@ -138,7 +153,7 @@ class AerodromeMonitor:
             current_tick = slot0[1]
             eth_price_usdc = tick_to_price(current_tick)
         except Exception as e:
-            print(f"🚨 Aerodrome Ошибка slot0 пула: {e}")
+            print(f"🚨 Ошибка получения slot0 пула: {e}")
             return []
 
         parsed_positions = []
@@ -146,6 +161,17 @@ class AerodromeMonitor:
         for token_id in token_ids:
             try:
                 pos = self.npm_contract.functions.positions(token_id).call()
+                
+                # Проверяем, что это пул WETH/USDC (сверяем токены контракта)
+                # Token0 и Token1 должны быть WETH и USDC в любом порядке
+                t0 = pos[2].lower()
+                t1 = pos[3].lower()
+                weth_check = "0x4200000000000000000000000000000000000006".lower()
+                usdc_check = "0x833589fcd6edb6e08f4c7c32d4f71b54bda02913".lower()
+                
+                if not ((t0 == weth_check and t1 == usdc_check) or (t0 == usdc_check and t1 == weth_check)):
+                    continue  # Пропускаем чужие типы пулов, если они есть
+
                 tick_lower = pos[5]
                 tick_upper = pos[6]
                 liquidity = pos[7]
@@ -171,7 +197,7 @@ class AerodromeMonitor:
                     "value_usd": total_usd
                 })
             except Exception as e:
-                print(f"🚨 Aerodrome Ошибка разбора позиции #{token_id}: {e}")
+                print(f"🚨 Ошибка разбора позиции #{token_id}: {e}")
                 continue
 
         return parsed_positions
