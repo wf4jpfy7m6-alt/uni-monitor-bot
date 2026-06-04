@@ -68,7 +68,6 @@ POOL_ABI = [
     },
 ]
 
-# Добавляем ABI для чтения ликвидности из Gauge
 GAUGE_ABI = [
     {
         "inputs": [{"internalType": "uint256", "name": "tokenId", "type": "uint256"}],
@@ -138,14 +137,15 @@ class AerodromeMonitor:
 
         token_ids = []
 
-        # Получаем ID токена динамически
+        # Безопасный запрос ID токена
         try:
             voter_id = self.voter_contract.functions.poolTokenId(self.wallet, self.gauge_address).call()
             if voter_id and voter_id > 0:
                 token_ids.append(voter_id)
         except Exception as e:
-            print(f"⚠️ Aerodrome: Не удалось получить ID через Voter: {e}")
+            print(f"⚠️ Aerodrome: Не удалось получить ID через Voter (используем резервный): {e}")
 
+        # Гарантируем наличие вашего ID в списке обработки
         if 872965 not in token_ids:
             token_ids.append(872965)
 
@@ -162,7 +162,7 @@ class AerodromeMonitor:
 
         for token_id in token_ids:
             try:
-                # ПЕРВОЕ ДЕЙСТВИЕ: Пробуем прочитать параметры напрямую из Gauge (так как позиция в стейкинге)
+                # Пробуем прочитать параметры из Gauge
                 try:
                     staked_data = self.gauge_contract.functions.stakedValues(token_id).call()
                     liquidity = int(staked_data[0])
@@ -172,7 +172,7 @@ class AerodromeMonitor:
                     price_lower = tick_to_price(tick_lower)
                     price_upper = tick_to_price(tick_upper)
                 except Exception as gauge_err:
-                    # ВТОРОЕ ДЕЙСТВИЕ: Если в Gauge пусто (позиция не застейкана), берем из обычного NPM
+                    # Если в Gauge ошибка, пробуем обычный NPM
                     try:
                         pos = self.npm_contract.functions.positions(token_id).call()
                         tick_lower = int(pos[5])
@@ -181,27 +181,24 @@ class AerodromeMonitor:
                         price_lower = tick_to_price(tick_lower)
                         price_upper = tick_to_price(tick_upper)
                     except Exception:
-                        # Аварийный откат, если оба контракта промолчали
+                        # Аварийные параметры границ
                         price_lower = 1417.7
                         price_upper = 2337.0
                         liquidity = 110000000000000
                         tick_lower = -77700
                         tick_upper = -72800
 
-                # Принудительная калибровка границ (для точности отображения)
                 if token_id == 872965:
                     price_lower = 1417.7
                     price_upper = 2337.0
                     
-                # Динамическая проверка диапазона
                 in_range = price_lower <= eth_price_usdc <= price_upper
 
-                # Автоматический расчет объемов на основе ЖИВОЙ ликвидности из контракта
+                # Расчет объемов на основе живой ликвидности
                 amount0, amount1 = liquidity_to_amounts(
                     liquidity, sqrt_price_x96, tick_lower, tick_upper
                 )
                 
-                # Считаем итоговую стоимость динамически
                 total_usd = amount0 * eth_price_usdc + amount1
 
                 parsed_positions.append({
