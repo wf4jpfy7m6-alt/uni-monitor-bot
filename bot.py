@@ -1,52 +1,47 @@
 import os
 import asyncio
 import logging
-from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
-from telegram.ext import Application, CommandHandler, ContextTypes, CallbackQueryHandler
+from telegram import Update, ReplyKeyboardMarkup, KeyboardButton
+from telegram.ext import Application, CommandHandler, ContextTypes, MessageHandler, filters
 from monitor import PositionMonitor
 from aerodrome_monitor import AerodromeMonitor
 from ai_analyst import analyze_position
 
-# Настройка логирования
 logging.basicConfig(
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
     level=logging.INFO
 )
 logger = logging.getLogger(__name__)
 
-# Конфигурация из переменных окружения
 WALLET_ADDRESS = os.getenv("WALLET_ADDRESS", "0x1074520dd10d6bad7d760f1762c435f658a8f21a")
 GAUGE_ADDRESS = "0x1E012d2A200B9c7e0DDc968Eba14e2E7C332A04A"
 TELEGRAM_TOKEN = os.getenv("TELEGRAM_TOKEN")
 CHAT_ID = os.getenv("CHAT_ID")
 CHECK_INTERVAL = int(os.getenv("CHECK_INTERVAL", "600"))
 
-# Инициализация мониторов сетей
+# Названия кнопок (вынесены в константы для удобства поддержки)
+BTN_STATUS = "📊 Мои позиции"
+BTN_ANALYZE = "🧠 Пристроить стейблы"  # Название адаптировано под ваш скриншот (или "🔍 Детальный AI-анализ")
+# Можно добавить кнопки "Добавить позицию" и "Удалить позицию" как на макете, если планируете их логику.
+
 monitor = PositionMonitor(WALLET_ADDRESS)
 aero_monitor = AerodromeMonitor(WALLET_ADDRESS, GAUGE_ADDRESS)
-
-# Хранилище состояний позиций {key: is_in_range}
 position_states = {}
 
 async def get_all_positions():
-    """Безопасный сбор позиций со всех сетей."""
     try:
         uni = await monitor.get_all_positions()
     except Exception as e:
         logger.error(f"Ошибка получения позиций Uniswap (Arbitrum): {e}")
         uni = []
-
     try:
         aero = await aero_monitor.get_positions()
     except Exception as e:
         logger.error(f"Ошибка получения позиций Aerodrome (Base): {e}")
         aero = []
-
     return uni + aero
 
-
 def generate_fallback_recommendation(p: dict) -> str:
-    """Генерирует встроенные структурированные варианты действий, если позиция вышла из диапазона."""
     if p["current_price"] < p["price_lower"]:
         direction = "ниже нижней границы"
         action_move = f"Закрыть текущую позицию и открыть новую ниже по тренду (например, с центром у текущей цены ${p['current_price']:,.0f}), чтобы сразу возобновить получение торговых комиссий."
@@ -54,51 +49,48 @@ def generate_fallback_recommendation(p: dict) -> str:
         direction = "выше верхней границы"
         action_move = f"Ваша позиция полностью ушла в USDC. Можно зафиксировать прибыль, подождать локального отката либо перезайти в более широкий коридор."
 
-    recommendation_text = (
+    return (
         f"\n🚨 *ПОЗИЦИЯ ВЫШЛА ИЗ ДИАПАЗОНА!*\n"
         f"*Ситуация:* Цена ETH (${p['current_price']:,.2f}) ушла {direction}. "
         f"Позиция на 100% конвертировалась в один актив, комиссии больше НЕ начисляются, капитал простаивает.\n\n"
         f"*Варианты действий:*\n"
         f"1️⃣ *Переместить диапазон вниз (Ребаланс):*\n"
-        f"   ↳ {action_move}\n"
+        f"    ↳ {action_move}\n"
         f"2️⃣ *Держать и ждать возврата:* \n"
-        f"   ↳ Ничего не делать. Если рынок развернется и цена вернется в коридор (${p['price_lower']:,.0f} — ${p['price_upper']:,.0f}), позиция автоматически активируется снова. Риск: неопределенное время без доходности.\n"
+        f"    ↳ Ничего не делать. Если рынок развернется и цена вернется в коридор (${p['price_lower']:,.0f} — ${p['price_upper']:,.0f}), позиция автоматически активируется снова. Риск: неопределенное время без доходности.\n"
         f"3️⃣ *Вывести ликвидность:* \n"
-        f"   ↳ Полностью забрать средства из пула, чтобы переждать высокую волатильность.\n\n"
+        f"    ↳ Полностью забрать средства из пула, чтобы переждать высокую волатильность.\n\n"
         f"💡 *Рекомендация:* Оцените стоимость транзакции (Gas) на Arbitrum/Base. Если текущий баланс позиции (~${p['value_usd']:,.0f}) небольшой, частые ребалансировки могут съесть доход от комиссий. При затяжном падении безопаснее использовать Вариант 1 частями."
     )
-    return recommendation_text
 
+def get_main_keyboard():
+    """Генерирует постоянную нижнюю клавиатуру, как на скриншоте."""
+    keyboard = [
+        [KeyboardButton(BTN_STATUS), KeyboardButton("🟢 Добавить позицию")],
+        [KeyboardButton(BTN_ANALYZE), KeyboardButton("🔴 Удалить позицию")]
+    ]
+    # resize_keyboard=True делает кнопки компактными (по высоте текста)
+    # is_persistent=True гарантирует, что клавиатура не будет скрываться под стандартную
+    return ReplyKeyboardMarkup(keyboard, resize_keyboard=True, is_persistent=True)
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    keyboard = [
-        [InlineKeyboardButton("📊 Статус позиций", callback_data="status")],
-        [InlineKeyboardButton("🔍 Детальный AI-анализ", callback_data="analyze")],
-    ]
     await update.message.reply_text(
         "👋 Привет! Я автоматический DeFi-агент. Мониторю твои LP-позиции WETH/USDC на Arbitrum и Base.\n\n"
-        "📈 *Доступные команды:*\n"
+        "📈 *Используй меню внизу экрана для управления или команды:*\n"
         "/status — Быстрый срез позиций + варианты действий\n"
         "/analyze — Глубокий разбор позиций нейросетью\n"
         "/help — Техническая справка",
-        reply_markup=InlineKeyboardMarkup(keyboard),
+        reply_markup=get_main_keyboard(),
         parse_mode="Markdown"
     )
 
-
 async def status_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    query = update.callback_query
-    if query:
-        msg = await query.message.reply_text("⏳ Опрашиваю смарт-контракты и собираю метрики...")
-    else:
-        msg = await update.message.reply_text("⏳ Опрашиваю смарт-контракты и собираю метрики...")
+    # Метод вызывается как через команду, так и через текст, поэтому всегда работаем с update.message
+    msg = await update.message.reply_text("⏳ Опрашиваю смарт-контракты и собираю метрики...")
 
     positions = await get_all_positions()
     if not positions:
-        if query:
-            await msg.edit_text("😶 Активных LP-позиций в пулах не обнаружено.")
-        else:
-            await msg.reply_text("😶 Активных LP-позиций в пулах не обнаружено.")
+        await msg.edit_text("😶 Активных LP-позиций в пулах не обнаружено.")
         return
 
     text = "📊 *Текущий статус твоих позиций:*\n\n"
@@ -116,23 +108,16 @@ async def status_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
             f"   Статус: *{status_label}*\n"
             f"   Текущая стоимость: ~${p['value_usd']:,.0f}\n"
         )
-        
         if not p["in_range"]:
             text += generate_fallback_recommendation(p)
-            
         text += "\n" + "═" * 15 + "\n\n"
 
+    # edit_text работает, так как бот редактирует СВОЕ собственное сообщение (msg), отправленное строкой выше
     await msg.edit_text(text, parse_mode="Markdown")
 
-
 async def analyze_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    query = update.callback_query
-    if query:
-        chat_id = query.message.chat_id
-        msg = await query.message.reply_text("🧠 Запускаю AI-аналитика (OpenAI)...")
-    else:
-        chat_id = update.message.chat_id
-        msg = await update.message.reply_text("🧠 Запускаю AI-аналитика (OpenAI)...")
+    chat_id = update.message.chat_id
+    msg = await update.message.reply_text("🧠 Запускаю AI-аналитика (OpenAI)...")
 
     positions = await get_all_positions()
     if not positions:
@@ -154,43 +139,40 @@ async def analyze_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
     await msg.delete()
 
-
 async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(
         f"ℹ️ *Справка по управлению ботом:*\n\n"
+        f"Используй кнопки меню внизу экрана или текстовые команды:\n"
         f"/status — Вывод балансов, стоимости пулов и флагов активности.\n"
         f"/analyze — Анализ рыночного контекста вокруг пула через ИИ.\n"
         f"/help — Данное меню.\n\n"
         f"🔄 *Фоновый мониторинг:* Активен.\n"
-        f"Автопроверка пулов выполняется каждые {CHECK_INTERVAL // 60} минут. "
-        f"Бот автоматически пришлет уведомление как при вылете цены из коридора, так и при её успешном возвращении обратно.",
+        f"Автопроверка пулов выполняется каждые {CHECK_INTERVAL // 60} минут.",
+        reply_markup=get_main_keyboard(),
         parse_mode="Markdown"
     )
 
+async def text_menu_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Хэндлер, обрабатывающий текстовые нажатия на нижние кнопки."""
+    user_text = update.message.text
 
-async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await update.callback_query.answer()
-    if update.callback_query.data == "status":
+    if user_text == BTN_STATUS:
         await status_command(update, context)
-    elif update.callback_query.data == "analyze":
+    elif user_text == BTN_ANALYZE:
         await analyze_command(update, context)
-
+    elif user_text in ["🟢 Добавить позицию", "🔴 Удалить позицию"]:
+        await update.message.reply_text("🛠️ Этот функционал находится в разработке.")
 
 async def auto_monitor(app):
-    """Фоновый поток для автоматического отслеживания позиций."""
-    await asyncio.sleep(10)  # Даем боту полностью инициализироваться на Railway
+    await asyncio.sleep(10)
     logger.info("Фоновый автомониторинг пулов запущен успешно.")
-    
     while True:
         try:
             positions = await get_all_positions()
-            logger.info(f"Скан сети: проверено {len(positions)} позиций.")
-            
             for p in positions:
                 key = f"{p['network']}_{p['token_id']}"
                 was_in_range = position_states.get(key, True)
                 
-                # 🚨 СЦЕНАРИЙ 1: Позиция ВЫЛЕТЕЛА из диапазона
                 if was_in_range and not p["in_range"]:
                     try:
                         analysis = await analyze_position(p)
@@ -205,11 +187,9 @@ async def auto_monitor(app):
                         f"Текущая цена: ${p['current_price']:,.2f}\n\n"
                         f"{analysis}"
                     )
-                    
                     if CHAT_ID:
-                        await app.bot.send_message(chat_id=CHAT_ID, text=text, parse_mode="Markdown")
+                        await app.bot.send_message(chat_id=CHAT_ID, text=text, parse_mode="Markdown", reply_markup=get_main_keyboard())
                 
-                # 🎉 СЦЕНАРИЙ 2: Позиция успешно ВЕРНУЛАСЬ в диапазон коридора
                 elif not was_in_range and p["in_range"]:
                     text = (
                         f"🎉 *ОТЛИЧНЫЕ НОВОСТИ: ПОЗИЦИЯ ВЕРНУЛАСЬ В ДИАПАЗОН!*\n\n"
@@ -219,49 +199,33 @@ async def auto_monitor(app):
                         f"Коридор доходности: ${p['price_lower']:,.0f} — ${p['price_upper']:,.0f}\n\n"
                         f"📈 Капитал снова в работе. Позиция возобновила сбор торговых комиссий в реальном времени!"
                     )
-                    
                     if CHAT_ID:
-                        await app.bot.send_message(chat_id=CHAT_ID, text=text, parse_mode="Markdown")
+                        await app.bot.send_message(chat_id=CHAT_ID, text=text, parse_mode="Markdown", reply_markup=get_main_keyboard())
                 
-                # Сохраняем текущее состояние для следующего шага сравнения
                 position_states[key] = p["in_range"]
-                
         except Exception as e:
             logger.error(f"Критическая ошибка в цикле автомониторинга: {e}")
-            
         await asyncio.sleep(CHECK_INTERVAL)
-
 
 async def main():
     if not TELEGRAM_TOKEN:
-        logger.critical("Переменная среды TELEGRAM_TOKEN отсутствует! Бот остановлен.")
         return
-
-    # Инициализация приложения с автоматическим сбросом зависших обновлений (drop_pending_updates)
     app = Application.builder().token(TELEGRAM_TOKEN).build()
     
-    # Регистрация обработчиков команд
+    # Команды
     app.add_handler(CommandHandler("start", start))
     app.add_handler(CommandHandler("status", status_command))
     app.add_handler(CommandHandler("analyze", analyze_command))
     app.add_handler(CommandHandler("help", help_command))
-    app.add_handler(CallbackQueryHandler(button_handler))
+    
+    # Перехватчик нажатий Reply-клавиатуры (вместо CallbackQueryHandler)
+    # Фильтр TEXT & ~COMMAND отсекает обычные команды, реагируя только на текст кнопок
+    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, text_menu_handler))
 
-    # Безопасный запуск пуллинга, полностью исключающий дубли сессий на платных тарифах
     async with app:
         await app.start()
-        await app.updater.start_polling(
-            allowed_updates=Update.ALL_TYPES, 
-            drop_pending_updates=True
-        )
-        logger.info("DeFi Бот успешно запущен и слушает команды.")
-        
-        # Запуск фонового бесконечного цикла проверок
+        await app.updater.start_polling(allowed_updates=Update.ALL_TYPES, drop_pending_updates=True)
         await auto_monitor(app)
 
-
 if __name__ == "__main__":
-    try:
-        asyncio.run(main())
-    except (KeyboardInterrupt, SystemExit):
-        logger.info("Бот остановлен пользователем.")
+    asyncio.run(main())
