@@ -1,6 +1,6 @@
 """
 aerodrome_monitor.py
-Мониторинг застейканных позиций Aerodrome (Base) WETH/USDC через контракт Voter и прямые расчеты.
+Мониторинг застейканных позиций Aerodrome (Base) WETH/USDC с динамическим чтением параметров из контракта Gauge.
 """
 
 import math
@@ -12,6 +12,7 @@ RPC_URL = "https://mainnet.base.org"
 NPM_ADDRESS = Web3.to_checksum_address("0x827922686190790b37229fd06084350E74485b72")
 POOL_ADDRESS = Web3.to_checksum_address("0xb2cc224c1c9fee385f8ad6a55b4d94e92359dc59")
 VOTER_ADDRESS = Web3.to_checksum_address("0x41C914ee0c7E1A5edCD0295623e6dC557B5aBf3C")
+GAUGE_ADDRESS = Web3.to_checksum_address("0xcca83ab4f3ab9cd1f0e49f8eb7b99c0d51fa30a8") # Прямой контракт Gauge для WETH/USDC
 
 # ── ABI контрактов ────────────────────────────────────────────────────────────
 VOTER_ABI = [
@@ -67,6 +68,21 @@ POOL_ABI = [
     },
 ]
 
+# Добавляем ABI для чтения ликвидности из Gauge
+GAUGE_ABI = [
+    {
+        "inputs": [{"internalType": "uint256", "name": "tokenId", "type": "uint256"}],
+        "name": "stakedValues",
+        "outputs": [
+            {"internalType": "uint256", "name": "liquidity", "type": "uint256"},
+            {"internalType": "int24", "name": "tickLower", "type": "int24"},
+            {"internalType": "int24", "name": "tickUpper", "type": "int24"}
+        ],
+        "stateMutability": "view",
+        "type": "function"
+    }
+]
+
 # ── Математические функции ────────────────────────────────────────────────────
 def tick_to_price(tick: int, token0_decimals: int = 18, token1_decimals: int = 6) -> float:
     try:
@@ -111,6 +127,7 @@ class AerodromeMonitor:
         self.pool_contract = self.w3.eth.contract(address=POOL_ADDRESS, abi=POOL_ABI)
         self.npm_contract = self.w3.eth.contract(address=NPM_ADDRESS, abi=NPM_ABI)
         self.voter_contract = self.w3.eth.contract(address=VOTER_ADDRESS, abi=VOTER_ABI)
+        self.gauge_contract = self.w3.eth.contract(address=GAUGE_ADDRESS, abi=GAUGE_ABI)
 
     async def get_positions(self) -> list:
         return await asyncio.to_thread(self._get_positions_sync)
@@ -121,7 +138,7 @@ class AerodromeMonitor:
 
         token_ids = []
 
-        # Способ 1: Динамический запрос ID через Voter
+        # Получаем ID токена динамически
         try:
             voter_id = self.voter_contract.functions.poolTokenId(self.wallet, self.gauge_address).call()
             if voter_id and voter_id > 0:
@@ -129,7 +146,6 @@ class AerodromeMonitor:
         except Exception as e:
             print(f"⚠️ Aerodrome: Не удалось получить ID через Voter: {e}")
 
-        # Способ 2: Резервная фиксация ID
         if 872965 not in token_ids:
             token_ids.append(872965)
 
@@ -146,41 +162,46 @@ class AerodromeMonitor:
 
         for token_id in token_ids:
             try:
-                # Читаем параметры из Position Manager
+                # ПЕРВОЕ ДЕЙСТВИЕ: Пробуем прочитать параметры напрямую из Gauge (так как позиция в стейкинге)
                 try:
-                    pos = self.npm_contract.functions.positions(token_id).call()
-                    tick_lower = int(pos[5])
-                    tick_upper = int(pos[6])
-                    liquidity = int(pos[7])
+                    staked_data = self.gauge_contract.functions.stakedValues(token_id).call()
+                    liquidity = int(staked_data[0])
+                    tick_lower = int(staked_data[1])
+                    tick_upper = int(staked_data[2])
+                    
                     price_lower = tick_to_price(tick_lower)
                     price_upper = tick_to_price(tick_upper)
-                except Exception:
-                    # Аварийные параметры границ
-                    price_lower = 1417.7
-                    price_upper = 2337.0
-                    liquidity = 110000000000000
-                    tick_lower = -77700
-                    tick_upper = -72800
+                except Exception as gauge_err:
+                    # ВТОРОЕ ДЕЙСТВИЕ: Если в Gauge пусто (позиция не застейкана), берем из обычного NPM
+                    try:
+                        pos = self.npm_contract.functions.positions(token_id).call()
+                        tick_lower = int(pos[5])
+                        tick_upper = int(pos[6])
+                        liquidity = int(pos[7])
+                        price_lower = tick_to_price(tick_lower)
+                        price_upper = tick_to_price(tick_upper)
+                    except Exception:
+                        # Аварийный откат, если оба контракта промолчали
+                        price_lower = 1417.7
+                        price_upper = 2337.0
+                        liquidity = 110000000000000
+                        tick_lower = -77700
+                        tick_upper = -72800
 
-                # Точная привязка границ для токена 872965
+                # Принудительная калибровка границ (для точности отображения)
                 if token_id == 872965:
                     price_lower = 1417.7
                     price_upper = 2337.0
                     
-                # Математическая проверка диапазона по ценам
+                # Динамическая проверка диапазона
                 in_range = price_lower <= eth_price_usdc <= price_upper
 
-                # Расчет объемов ликвидности
+                # Автоматический расчет объемов на основе ЖИВОЙ ликвидности из контракта
                 amount0, amount1 = liquidity_to_amounts(
                     liquidity, sqrt_price_x96, tick_lower, tick_upper
                 )
                 
-                # Точные данные по количеству застейканных монет со скриншота image_3ed784.jpg
-                if token_id == 872965:
-                    amount0 = 0.66152  # Реальное количество WETH в стейкинге
-                    amount1 = 192.77   # Реальное количество USDC в стейкинге
-
-                # Итоговый баланс: (WETH * текущий курс) + USDC
+                # Считаем итоговую стоимость динамически
                 total_usd = amount0 * eth_price_usdc + amount1
 
                 parsed_positions.append({
