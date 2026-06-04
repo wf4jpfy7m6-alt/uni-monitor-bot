@@ -14,15 +14,18 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 WALLET_ADDRESS = os.getenv("WALLET_ADDRESS", "0x1074520dd10d6bad7d760f1762c435f658a8f21a")
+WALLET_ADDRESS = os.getenv("WALLET_ADDRESS", "0x1074520dd10d6bad7d760f1762c435f658a8f21a")
+# Добавляем адрес нашего конкретного Gauge контракта
+GAUGE_ADDRESS = "0x1E012d2A200B9c7e0DDc968Eba14e2E7C332A04A"
+
 TELEGRAM_TOKEN = os.getenv("TELEGRAM_TOKEN")
 CHAT_ID = os.getenv("CHAT_ID")
 CHECK_INTERVAL = int(os.getenv("CHECK_INTERVAL", "600"))
 
 monitor = PositionMonitor(WALLET_ADDRESS)
-aero_monitor = AerodromeMonitor(WALLET_ADDRESS)
+# Передаем в монитор Aerodrome и адрес кошелька, и адрес нужного Gauge
+aero_monitor = AerodromeMonitor(WALLET_ADDRESS, GAUGE_ADDRESS)
 position_states = {}
-
-
 async def get_all_positions():
     uni = await monitor.get_all_positions()
     aero = await aero_monitor.get_positions()
