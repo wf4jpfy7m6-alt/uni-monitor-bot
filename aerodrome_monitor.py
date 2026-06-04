@@ -120,7 +120,7 @@ class AerodromeMonitor:
 
         token_ids = []
         
-        # Шаг 1: Сначала проверяем, лежит ли NFT на самом кошельке
+        # 1. Сканируем NFT на самом кошельке кошельке
         try:
             balance = self.npm_contract.functions.balanceOf(self.wallet).call()
             for i in range(balance):
@@ -129,23 +129,20 @@ class AerodromeMonitor:
         except Exception as e:
             print(f"⚠️ Ошибка проверки баланса кошелька: {e}")
 
-        # Шаг 2: Проверяем, застейкан ли NFT в самом контракте Gauge (он становится владельцем на NPM)
+        # 2. Сканируем NFT, застейканные внутри контракта Gauge
         try:
             gauge_balance = self.npm_contract.functions.balanceOf(self.gauge_address).call()
             for i in range(gauge_balance):
                 t_id = self.npm_contract.functions.tokenOfOwnerByIndex(self.gauge_address, i).call()
-                # Так как токенов в Gauge много, мы проверяем вашу конкретную известную позицию
-                if t_id == 872965:  
-                    token_ids.append(t_id)
+                token_ids.append(t_id)
         except Exception as e:
             print(f"⚠️ Ошибка проверки баланса Gauge контракта: {e}")
 
-        # Если не нашли на кошельке и в общем списке, жестко добавляем ваш ID для принудительного трекинга
-        if 872965 not in token_ids:
-            token_ids.append(872965)
-
-        # Очищаем от дубликатов
+        # Удаляем дубликаты, если они возникли
         token_ids = list(set(token_ids))
+
+        if not token_ids:
+            return []
 
         try:
             slot0 = self.pool_contract.functions.slot0().call()
@@ -162,15 +159,14 @@ class AerodromeMonitor:
             try:
                 pos = self.npm_contract.functions.positions(token_id).call()
                 
-                # Проверяем, что это пул WETH/USDC (сверяем токены контракта)
-                # Token0 и Token1 должны быть WETH и USDC в любом порядке
+                # Защита: Сверяем, что это наш пул WETH/USDC
                 t0 = pos[2].lower()
                 t1 = pos[3].lower()
                 weth_check = "0x4200000000000000000000000000000000000006".lower()
                 usdc_check = "0x833589fcd6edb6e08f4c7c32d4f71b54bda02913".lower()
                 
                 if not ((t0 == weth_check and t1 == usdc_check) or (t0 == usdc_check and t1 == weth_check)):
-                    continue  # Пропускаем чужие типы пулов, если они есть
+                    continue  # Пропускаем сторонние NFT, если они есть
 
                 tick_lower = pos[5]
                 tick_upper = pos[6]
@@ -197,7 +193,8 @@ class AerodromeMonitor:
                     "value_usd": total_usd
                 })
             except Exception as e:
-                print(f"🚨 Ошибка разбора позиции #{token_id}: {e}")
+                # Теперь битые или старые ID просто безопасно пропускаются мимо
+                print(f"⚠️ Пропущен неактивный ID #{token_id}: {e}")
                 continue
 
         return parsed_positions
