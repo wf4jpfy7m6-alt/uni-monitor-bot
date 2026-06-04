@@ -7,43 +7,35 @@ from monitor import PositionMonitor
 from aerodrome_monitor import AerodromeMonitor
 from ai_analyst import analyze_position
 
-# Настройка логирования
 logging.basicConfig(
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
     level=logging.INFO
 )
 logger = logging.getLogger(__name__)
 
-# Конфигурация из переменных окружения
 WALLET_ADDRESS = os.getenv("WALLET_ADDRESS", "0x1074520dd10d6bad7d760f1762c435f658a8f21a")
 GAUGE_ADDRESS = "0x1E012d2A200B9c7e0DDc968Eba14e2E7C332A04A"
 TELEGRAM_TOKEN = os.getenv("TELEGRAM_TOKEN")
 CHAT_ID = os.getenv("CHAT_ID")
 CHECK_INTERVAL = int(os.getenv("CHECK_INTERVAL", "600"))
 
-# Названия кнопок меню (вынесены в глобальные константы)
 BTN_STATUS = "📊 Статус позиций"
 BTN_ANALYZE = "🔍 AI Анализ"
 BTN_ADD = "🟢 Добавить позицию"
 BTN_REMOVE = "🔴 Удалить позицию"
 
-# Инициализация мониторов смарт-контрактов
 monitor = PositionMonitor(WALLET_ADDRESS)
 aero_monitor = AerodromeMonitor(WALLET_ADDRESS, GAUGE_ADDRESS)
 position_states = {}
 
 def get_main_keyboard():
-    """Генерирует нативное нижнее меню из Reply-кнопок."""
     keyboard = [
         [KeyboardButton(BTN_STATUS), KeyboardButton(BTN_ANALYZE)],
         [KeyboardButton(BTN_ADD), KeyboardButton(BTN_REMOVE)]
     ]
-    # resize_keyboard делает кнопки компактными по высоте
-    # is_persistent удерживает меню открытым на постоянной основе
     return ReplyKeyboardMarkup(keyboard, resize_keyboard=True, is_persistent=True)
 
 async def get_all_positions():
-    """Опрашивает пулы Uniswap v3 и Aerodrome CL."""
     try:
         uni = await monitor.get_all_positions()
     except Exception as e:
@@ -57,7 +49,6 @@ async def get_all_positions():
     return uni + aero
 
 def generate_fallback_recommendation(p: dict) -> str:
-    """Генерирует стандартные варианты действий, если AI-аналитик недоступен."""
     if p["current_price"] < p["price_lower"]:
         direction = "ниже нижней границы"
         action_move = f"Закрыть текущую позицию и открыть новую ниже по тренду (например, с центром у текущей цены ${p['current_price']:,.0f}), чтобы сразу возобновить получение торговых комиссий."
@@ -80,7 +71,6 @@ def generate_fallback_recommendation(p: dict) -> str:
     )
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Обработчик команды /start."""
     await update.message.reply_text(
         "👋 Привет! Я автоматический DeFi-агент. Мониторю твои LP-позиции WETH/USDC на Arbitrum и Base.\n\n"
         "📈 *Используй постоянные кнопки внизу экрана или команды:*\n"
@@ -92,10 +82,9 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     )
 
 async def status_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Выводит текущую метрику пулов по запросу пользователя."""
     msg = await update.message.reply_text("⏳ Опрашиваю смарт-контракты и собираю метрики...")
-
     positions = await get_all_positions()
+    
     if not positions:
         await msg.edit_text("😶 Активных LP-позиций в пулах не обнаружено.")
         return
@@ -122,11 +111,10 @@ async def status_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await msg.edit_text(text, parse_mode="Markdown")
 
 async def analyze_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Запускает ИИ-генерацию стратегий на основе текущих цен."""
     chat_id = update.message.chat_id
     msg = await update.message.reply_text("🧠 Запускаю AI-аналитика (OpenAI)...")
-
     positions = await get_all_positions()
+    
     if not positions:
         await msg.edit_text("😶 Позиций для анализа не найдено.")
         return
@@ -147,7 +135,6 @@ async def analyze_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await msg.delete()
 
 async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Справка по доступному функционалу."""
     await update.message.reply_text(
         f"ℹ️ *Справка по управлению ботом:*\n\n"
         f"Используй нативное меню внизу экрана или стандартные команды:\n"
@@ -161,9 +148,7 @@ async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     )
 
 async def text_menu_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Обрабатывает текстовые клики по кнопкам Reply-клавиатуры."""
     user_text = update.message.text
-
     if user_text == BTN_STATUS:
         await status_command(update, context)
     elif user_text == BTN_ANALYZE:
@@ -172,7 +157,6 @@ async def text_menu_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text("🛠️ Этот функционал находится в разработке.")
 
 async def auto_monitor(app):
-    """Асинхронный цикл проверки позиций и пуш-уведомлений."""
     await asyncio.sleep(10)
     logger.info("Фоновый автомониторинг пулов запущен успешно.")
     while True:
@@ -193,4 +177,45 @@ async def auto_monitor(app):
                         f"*{p['token0']}/{p['token1']}* — _{p['network']}_\n"
                         f"NFT #{p['token_id']}\n"
                         f"Границы пула: ${p['price_lower']:,.0f} — ${p['price_upper']:,.0f}\n"
-                        f"Текущая цена: ${p['current_price']:,.2f}\n
+                        f"Текущая цена: ${p['current_price']:,.2f}\n\n"
+                        f"{analysis}"
+                    )
+                    if CHAT_ID:
+                        await app.bot.send_message(chat_id=CHAT_ID, text=text, parse_mode="Markdown", reply_markup=get_main_keyboard())
+                
+                elif not was_in_range and p["in_range"]:
+                    text = (
+                        f"🎉 *ОТЛИЧНЫЕ НОВОСТИ: ПОЗИЦИЯ ВЕРНУЛАСЬ В ДИАПАЗОН!*\n\n"
+                        f"✅ *{p['token0']}/{p['token1']}* — _{p['network']}_\n"
+                        f"NFT #{p['token_id']}\n"
+                        f"Текущая цена ETH: ${p['current_price']:,.2f}\n"
+                        f"Коридор доходности: ${p['price_lower']:,.0f} — ${p['price_upper']:,.0f}\n\n"
+                        f"📈 Капитал снова в работе. Позиция возобновила сбор торговых комиссий в реальном времени!"
+                    )
+                    if CHAT_ID:
+                        await app.bot.send_message(chat_id=CHAT_ID, text=text, parse_mode="Markdown", reply_markup=get_main_keyboard())
+                
+                position_states[key] = p["in_range"]
+        except Exception as e:
+            logger.error(f"Критическая ошибка в цикле автомониторинга: {e}")
+        await asyncio.sleep(CHECK_INTERVAL)
+
+async def main():
+    if not TELEGRAM_TOKEN:
+        logger.error("Критическая ошибка: Переменная TELEGRAM_TOKEN не задана!")
+        return
+    app = Application.builder().token(TELEGRAM_TOKEN).build()
+    
+    app.add_handler(CommandHandler("start", start))
+    app.add_handler(CommandHandler("status", status_command))
+    app.add_handler(CommandHandler("analyze", analyze_command))
+    app.add_handler(CommandHandler("help", help_command))
+    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, text_menu_handler))
+
+    async with app:
+        await app.start()
+        await app.updater.start_polling(allowed_updates=Update.ALL_TYPES, drop_pending_updates=True)
+        await auto_monitor(app)
+
+if __name__ == "__main__":
+    asyncio.run(main())
