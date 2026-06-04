@@ -115,18 +115,21 @@ class AerodromeMonitor:
 
     async def get_positions(self) -> list:
         """Собирает данные о позициях для интеграции с ботом."""
-        # Обернем синхронные вызовы web3 в asyncio.to_thread, чтобы бот не «фризил»
         return await asyncio.to_thread(self._get_positions_sync)
 
     def _get_positions_sync(self) -> list:
         if not self.w3.is_connected():
+            print("🚨 Aerodrome: Web3 не подключен к RPC!")
             return []
 
         try:
-            token_ids = self.gauge_contract.functions.stakedValues(self.wallet).call()
+            target_wallet = Web3.to_checksum_address(self.wallet)
+            token_ids = self.gauge_contract.functions.stakedValues(target_wallet).call()
+            print(f"🔍 Aerodrome: Найдено токенов в Gauge для кошелька {target_wallet}: {token_ids}")
             if not token_ids:
                 return []
-        except Exception:
+        except Exception as e:
+            print(f"🚨 Aerodrome Ошибка stakedValues: {e}")
             return []
 
         try:
@@ -134,7 +137,8 @@ class AerodromeMonitor:
             sqrt_price_x96 = slot0[0]
             current_tick = slot0[1]
             eth_price_usdc = tick_to_price(current_tick)
-        except Exception:
+        except Exception as e:
+            print(f"🚨 Aerodrome Ошибка slot0 пула: {e}")
             return []
 
         parsed_positions = []
@@ -155,7 +159,6 @@ class AerodromeMonitor:
                 )
                 total_usd = amount0 * eth_price_usdc + amount1
 
-                # Формируем структуру данных, идентичную структуре Uniswap-монитора
                 parsed_positions.append({
                     "network": "Base (Aerodrome)",
                     "token_id": token_id,
@@ -167,7 +170,8 @@ class AerodromeMonitor:
                     "in_range": in_range,
                     "value_usd": total_usd
                 })
-            except Exception:
+            except Exception as e:
+                print(f"🚨 Aerodrome Ошибка разбора позиции #{token_id}: {e}")
                 continue
 
         return parsed_positions
