@@ -49,25 +49,30 @@ async def get_all_positions():
     return uni + aero
 
 def generate_fallback_recommendation(p: dict) -> str:
-    if p["current_price"] < p["price_lower"]:
+    cur_p = p.get("current_price", 0.0)
+    p_low = p.get("price_lower", 0.0)
+    p_up = p.get("price_upper", 0.0)
+    val_usd = p.get("value_usd", 0.0)
+
+    if cur_p < p_low:
         direction = "ниже нижней границы"
-        action_move = f"Закрыть текущую позицию и открыть новую ниже по тренду (например, с центром у текущей цены ${p['current_price']:,.0f}), чтобы сразу возобновить получение торговых комиссий."
+        action_move = f"Закрыть текущую позицию и открыть новую ниже по тренду (например, с центром у текущей цены ${cur_p:,.0f}), чтобы сразу возобновить получение торговых комиссий."
     else:
         direction = "выше верхней границы"
-        action_move = f"Ваша позиция полностью ушла в USDC. Можно зафиксировать прибыль, подождать локального отката либо перезайти в более широкий коридор."
+        action_move = "Ваша позиция полностью ушла в USDC. Можно зафиксировать прибыль, подождать локального отката либо перезайти в более широкий коридор."
 
     return (
         f"\n🚨 *ПОЗИЦИЯ ВЫШЛА ИЗ ДИАПАЗОНА!*\n"
-        f"*Ситуация:* Цена ETH (${p['current_price']:,.2f}) ушла {direction}. "
+        f"*Ситуация:* Цена ETH (${cur_p:,.2f}) ушла {direction}. "
         f"Позиция на 100% конвертировалась в один актив, комиссии больше НЕ начисляются, капитал простаивает.\n\n"
         f"*Варианты действий:*\n"
         f"1️⃣ *Переместить диапазон вниз (Ребаланс):*\n"
         f"    ↳ {action_move}\n"
         f"2️⃣ *Держать и ждать возврата:* \n"
-        f"    ↳ Ничего не делать. Если рынок развернется и цена вернется в коридор (${p['price_lower']:,.0f} — ${p['price_upper']:,.0f}), позиция автоматически активируется снова. Риск: неопределенное время без доходности.\n"
+        f"    ↳ Ничего не делать. Если рынок развернется и цена вернется в коридор (${p_low:,.0f} — ${p_up:,.0f}), позиция автоматически активируется снова. Риск: неопределенное время без доходности.\n"
         f"3️⃣ *Вывести ликвидность:* \n"
         f"    ↳ Полностью забрать средства из пула, чтобы переждать высокую волатильность.\n\n"
-        f"💡 *Рекомендация:* Оцените стоимость транзакции (Gas) на Arbitrum/Base. Если текущий баланс позиции (~${p['value_usd']:,.0f}) небольшой, частые ребалансировки могут съесть доход от комиссий. При затяжном падении безопаснее использовать Вариант 1 частями."
+        f"💡 *Рекомендация:* Оцените стоимость транзакции (Gas) на Arbitrum/Base. Если текущий баланс позиции (~${val_usd:,.0f}) небольшой, частые ребалансировки могут съесть доход от комиссий."
     )
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -95,14 +100,18 @@ async def status_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     for p in positions:
         emoji = "✅" if p["in_range"] else "🚨"
         status_label = "В диапазоне" if p["in_range"] else "❗ ВНЕ диапазона"
+        cur_p = p.get("current_price", 0.0)
+        p_low = p.get("price_lower", 0.0)
+        p_up = p.get("price_upper", 0.0)
+        val_usd = p.get("value_usd", 0.0)
         
         text += (
             f"{emoji} *{p['token0']}/{p['token1']}* — _{p['network']}_\n"
             f"   NFT #{p['token_id']}\n"
-            f"   Коридор: ${p['price_lower']:,.0f} — ${p['price_upper']:,.0f}\n"
-            f"   Текущая цена: ${p['current_price']:,.2f}\n"
+            f"   Коридор: ${p_low:,.0f} — ${p_up:,.0f}\n"
+            f"   Текущая цена: ${cur_p:,.2f}\n"
             f"   Статус: *{status_label}*\n"
-            f"   Текущая стоимость: ~${p['value_usd']:,.0f}\n"
+            f"   Текущая стоимость: ~${val_usd:,.0f}\n"
         )
         if not p["in_range"]:
             text += generate_fallback_recommendation(p)
@@ -172,24 +181,32 @@ async def auto_monitor(app):
                     except Exception:
                         analysis = generate_fallback_recommendation(p)
 
+                    cur_p = p.get("current_price", 0.0)
+                    p_low = p.get("price_lower", 0.0)
+                    p_up = p.get("price_upper", 0.0)
+
                     text = (
                         f"🚨 *ВНИМАНИЕ: ПОЗИЦИЯ ВЫШЛА ИЗ ДИАПАЗОНА!*\n\n"
                         f"*{p['token0']}/{p['token1']}* — _{p['network']}_\n"
                         f"NFT #{p['token_id']}\n"
-                        f"Границы пула: ${p['price_lower']:,.0f} — ${p['price_upper']:,.0f}\n"
-                        f"Текущая цена: ${p['current_price']:,.2f}\n\n"
+                        f"Границы пула: ${p_low:,.0f} — ${p_up:,.0f}\n"
+                        f"Текущая цена: ${cur_p:,.2f}\n\n"
                         f"{analysis}"
                     )
                     if CHAT_ID:
                         await app.bot.send_message(chat_id=CHAT_ID, text=text, parse_mode="Markdown", reply_markup=get_main_keyboard())
                 
                 elif not was_in_range and p["in_range"]:
+                    cur_p = p.get("current_price", 0.0)
+                    p_low = p.get("price_lower", 0.0)
+                    p_up = p.get("price_upper", 0.0)
+
                     text = (
                         f"🎉 *ОТЛИЧНЫЕ НОВОСТИ: ПОЗИЦИЯ ВЕРНУЛАСЬ В ДИАПАЗОН!*\n\n"
                         f"✅ *{p['token0']}/{p['token1']}* — _{p['network']}_\n"
                         f"NFT #{p['token_id']}\n"
-                        f"Текущая цена ETH: ${p['current_price']:,.2f}\n"
-                        f"Коридор доходности: ${p['price_lower']:,.0f} — ${p['price_upper']:,.0f}\n\n"
+                        f"Текущая цена ETH: ${cur_p:,.2f}\n"
+                        f"Коридор доходности: ${p_low:,.0f} — ${p_up:,.0f}\n\n"
                         f"📈 Капитал снова в работе. Позиция возобновила сбор торговых комиссий в реальном времени!"
                     )
                     if CHAT_ID:
