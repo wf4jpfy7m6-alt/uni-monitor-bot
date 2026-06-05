@@ -41,13 +41,14 @@ position_states = {}
 DB_PATH = "/app/data/positions.db"
 
 def init_db():
+    # Создаем папку /app/data, если её еще нет на диске
+    dir_name = os.path.dirname(DB_PATH)
+    if dir_name:
+        os.makedirs(dir_name, exist_ok=True)
+        
     conn = sqlite3.connect(DB_PATH)
     cursor = conn.cursor()
     cursor.execute("""
-        CREATE TABLE IF NOT EXISTS positions (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            network TEXT NOT NULL,
-            wallet_address TEXT NOT NULL,
             gauge_address TEXT
         )
     """)
