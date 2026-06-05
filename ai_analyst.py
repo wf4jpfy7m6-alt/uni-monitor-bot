@@ -8,7 +8,6 @@ logger = logging.getLogger(__name__)
 # Инициализация API
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
 genai.configure(api_key=GEMINI_API_KEY)
-model = genai.GenerativeModel('gemini-1.5-flash')
 
 async def clean_data(data):
     """Рекурсивная очистка данных от корутин."""
@@ -26,14 +25,18 @@ async def analyze_position(position: dict, network: str = None) -> str:
         return "⚠️ Ошибка: GEMINI_API_KEY не задан."
 
     try:
+        # Указываем модель явно через get_model
+        # Иногда Google требует полное имя модели: 'models/gemini-1.5-flash'
+        model = genai.GenerativeModel('models/gemini-1.5-flash')
+        
         clean_pos = await clean_data(position)
         prompt = f"Проанализируй DeFi позицию: {str(clean_pos)}. Дай краткие рекомендации на русском языке."
 
-        # Генерация контента через официальный метод
         response = model.generate_content(prompt)
         
         return response.text
 
     except Exception as e:
-        logger.error(f"Критическая ошибка Gemini SDK: {e}")
-        return "⚠️ Ошибка анализа (API недоступно)"
+        logger.error(f"Ошибка Gemini SDK: {e}")
+        # Выводим более подробную информацию для отладки, если она попадет в логи
+        return f"⚠️ Ошибка анализа: {type(e).__name__}"
