@@ -94,7 +94,6 @@ async def handle_status_request(update: Update, context: ContextTypes.DEFAULT_TY
         if net == "Arbitrum":
             try:
                 monitor = PositionMonitor()
-                # Для Arbitrum вызываем его родной метод (предполагаем get_all_positions или аналогичный)
                 if hasattr(monitor, 'get_all_positions'):
                     active_positions = await monitor.get_all_positions(wallet)
                 elif hasattr(monitor, 'get_positions'):
@@ -115,17 +114,13 @@ async def handle_status_request(update: Update, context: ContextTypes.DEFAULT_TY
 
         elif net == "Base (Aerodrome)":
             try:
-                # Инициализируем твой класс с кошельком и gauge
                 aero_monitor = AerodromeMonitor(wallet_address=wallet, gauge_address=gauge)
-                
-                # Точно вызываем существующий асинхронный метод get_positions() из твоего файла
                 active_positions = await aero_monitor.get_positions()
                 
                 if not active_positions:
                     await update.message.reply_text(f"🔵 *Base (Aerodrome)*:\nАктивных позиций не найдено.", parse_mode="Markdown")
                     continue
                 
-                # Разбираем массив словарей, который возвращает aerodrome_monitor.py
                 for p in active_positions:
                     range_status = "✅ В диапазоне" if p.get("in_range") else "❌ Вне диапазона"
                     
@@ -162,7 +157,9 @@ async def handle_analyze_request(update: Update, context: ContextTypes.DEFAULT_T
                 if method:
                     active_positions = await method(wallet) if asyncio.iscoroutinefunction(method) else method(wallet)
                     for p_data in active_positions:
-                        await update.message.reply_text(analyze_position(p_data, "Arbitrum"))
+                        # Добавили await и Markdown форматирование
+                        analysis_res = await analyze_position(p_data, "Arbitrum")
+                        await update.message.reply_text(analysis_res, parse_mode="Markdown")
             except Exception as e:
                 logger.error(f"Ошибка ИИ Arbitrum: {e}")
                 await update.message.reply_text(f"❌ Ошибка ИИ-анализа Arbitrum: {e}")
@@ -172,7 +169,9 @@ async def handle_analyze_request(update: Update, context: ContextTypes.DEFAULT_T
                 aero_monitor = AerodromeMonitor(wallet_address=wallet, gauge_address=gauge)
                 active_positions = await aero_monitor.get_positions()
                 for p_data in active_positions:
-                    await update.message.reply_text(analyze_position(p_data, "Base (Aerodrome)"))
+                    # Добавили await и Markdown форматирование
+                    analysis_res = await analyze_position(p_data, "Base (Aerodrome)")
+                    await update.message.reply_text(analysis_res, parse_mode="Markdown")
             except Exception as e:
                 logger.error(f"Ошибка ИИ Aerodrome: {e}")
                 await update.message.reply_text(f"❌ Ошибка ИИ-анализа Base: {e}")
