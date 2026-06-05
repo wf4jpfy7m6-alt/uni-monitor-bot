@@ -1,11 +1,11 @@
 import os
 import sqlite3
 
-# --- 1. КРИТИЧЕСКИЙ ФИКС ПАПКИ ДЛЯ RAILWAY VOLUME ---
+# --- 1. ПАПКА ДЛЯ RAILWAY VOLUME (ПОСТОЯННЫЙ ДИСК) ---
 DB_PATH = "/app/data/positions.db"
 os.makedirs(os.path.dirname(DB_PATH), exist_ok=True)
 
-# --- 2. ОСТАЛЬНЫЕ ИМПОРТЫ ---
+# --- 2. ИМПОРТЫ ---
 import asyncio
 import logging
 from telegram import Update, ReplyKeyboardMarkup, KeyboardButton, ReplyKeyboardRemove
@@ -80,6 +80,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         reply_markup=get_main_keyboard()
     )
 
+# --- Обработка кнопки "Статус позиций" ---
 async def handle_status_request(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text("🔄 Запрашиваю текущий статус пулов, подожди немного...")
     positions = await get_all_positions()
@@ -93,13 +94,23 @@ async def handle_status_request(update: Update, context: ContextTypes.DEFAULT_TY
     if arbitrum_wallets:
         monitor = PositionMonitor()
         for wallet in set(arbitrum_wallets):
-            await monitor.check_positions(context.bot, update.message.chat_id, wallet_address=wallet, force_send=True)
+            try:
+                await monitor.check_positions(context.bot, update.message.chat_id, wallet_address=wallet, force_send=True)
+            except Exception as e:
+                logger.error(f"Ошибка Arbitrum: {e}")
+                await update.message.reply_text(f"❌ Ошибка получения данных с Arbitrum: {e}")
 
     if base_positions:
-        aero_monitor = AerodromeMonitor()
         for pos in base_positions:
-            await aero_monitor.check_positions(context.bot, update.message.chat_id, wallet_address=pos[1], gauge_address=pos[2], force_send=True)
+            try:
+                # Фикс: Передаем кошелек и gauge сразу в конструктор класса
+                aero_monitor = AerodromeMonitor(wallet_address=pos[1], gauge_address=pos[2])
+                await aero_monitor.check_positions(context.bot, update.message.chat_id, force_send=True)
+            except Exception as e:
+                logger.error(f"Ошибка Aerodrome: {e}")
+                await update.message.reply_text(f"❌ Ошибка получения данных с Base: {e}")
 
+# --- Обработка кнопки "AI Анализ" ---
 async def handle_analyze_request(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text("🤖 ИИ-Аналитик изучает твои позиции...")
     positions = await get_all_positions()
@@ -113,16 +124,25 @@ async def handle_analyze_request(update: Update, context: ContextTypes.DEFAULT_T
     if arbitrum_wallets:
         monitor = PositionMonitor()
         for wallet in set(arbitrum_wallets):
-            active_positions = await monitor.get_all_positions(wallet)
-            for pos in active_positions:
-                await update.message.reply_text(analyze_position(pos, "Arbitrum"))
+            try:
+                active_positions = await monitor.get_all_positions(wallet)
+                for pos in active_positions:
+                    await update.message.reply_text(analyze_position(pos, "Arbitrum"))
+            except Exception as e:
+                logger.error(f"Ошибка ИИ Arbitrum: {e}")
+                await update.message.reply_text(f"❌ Ошибка ИИ-анализа Arbitrum: {e}")
 
     if base_positions:
-        aero_monitor = AerodromeMonitor()
         for pos in base_positions:
-            active_positions = await aero_monitor.get_all_positions(pos[1], pos[2])
-            for pos_data in active_positions:
-                await update.message.reply_text(analyze_position(pos_data, "Base (Aerodrome)"))
+            try:
+                # Фикс: Передаем кошелек и gauge сразу в конструктор класса для ИИ-анализа
+                aero_monitor = AerodromeMonitor(wallet_address=pos[1], gauge_address=pos[2])
+                active_positions = await aero_monitor.get_all_positions()
+                for pos_data in active_positions:
+                    await update.message.reply_text(analyze_position(pos_data, "Base (Aerodrome)"))
+            except Exception as e:
+                logger.error(f"Ошибка ИИ Aerodrome: {e}")
+                await update.message.reply_text(f"❌ Ошибка ИИ-анализа Base: {e}")
 
 # --- Добавление позиции ---
 async def add_position_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -181,7 +201,7 @@ async def save_position_to_db(update: Update, context: ContextTypes.DEFAULT_TYPE
         conn.close()
         await update.message.reply_text(f"✅ Позиция успешно добавлена!", reply_markup=get_main_keyboard())
     except Exception as e:
-        await update.message.reply_text(f"❌ Ошибка: {e}", reply_markup=get_main_keyboard())
+        await update.message.reply_text(f"❌ Ошибка записи в БД: {e}", reply_markup=get_main_keyboard())
     return ConversationHandler.END
 
 # --- Удаление позиции ---
@@ -198,7 +218,7 @@ async def remove_position_start(update: Update, context: ContextTypes.DEFAULT_TY
         reply_keyboard.append([f"{idx + 1}. {pos[0]} ({pos[1][:6]}...{pos[1][-4:]}{gauge_str})"])
     reply_keyboard.append(['❌ Отмена'])
     
-    await update.message.reply_text("Выберите позицию для УДАЛИТЬ:", reply_markup=ReplyKeyboardMarkup(reply_keyboard, resize_keyboard=True))
+    await update.message.reply_text("Выберите позицию для УДАЛЕНИЯ:", reply_markup=ReplyKeyboardMarkup(reply_keyboard, resize_keyboard=True))
     return CONFIRM_REMOVE
 
 async def remove_position_confirm(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -248,7 +268,7 @@ def main():
     remove_conv = ConversationHandler(
         entry_points=[MessageHandler(filters.Text(BTN_REMOVE), remove_position_start)],
         states={CONFIRM_REMOVE: [MessageHandler(filters.TEXT & ~filters.Text(['❌ Отмена']), remove_position_confirm)]},
-        fallbacks=[MessageHandler(filters.Text(['❌ Отмена', '/cancel']), cancel)]
+        fallbacks=[MessageHandler(filters.Text(['❌ Отмена']) | filters.COMMAND, cancel)]
     )
 
     application.add_handler(CommandHandler("start", start))
