@@ -1,7 +1,7 @@
 import os
-import logging
 import google.generativeai as genai
 import inspect
+import logging
 
 logger = logging.getLogger(__name__)
 
@@ -9,8 +9,11 @@ logger = logging.getLogger(__name__)
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
 genai.configure(api_key=GEMINI_API_KEY)
 
+# Устанавливаем именно то имя модели, которое требует API для вашего проекта
+MODEL_NAME = "gemini-3.1-flash-lite"
+
 async def clean_data(data):
-    """Рекурсивная очистка данных от корутин."""
+    """Рекурсивная очистка данных от корутин перед отправкой в ИИ."""
     if inspect.iscoroutine(data):
         return await data
     if isinstance(data, dict):
@@ -20,23 +23,22 @@ async def clean_data(data):
     return data
 
 async def analyze_position(position: dict, network: str = None) -> str:
-    """Анализ позиции через официальный SDK Google."""
+    """Анализ позиции через Gemini 3.1 Flash-Lite."""
     if not GEMINI_API_KEY:
-        return "⚠️ Ошибка: GEMINI_API_KEY не задан."
+        return "⚠️ Ошибка: GEMINI_API_KEY не задан в настройках Railway."
 
     try:
-        # Указываем модель явно через get_model
-        # Иногда Google требует полное имя модели: 'models/gemini-1.5-flash'
-        model = genai.GenerativeModel('models/gemini-1.5-flash')
+        # Инициализируем модель по техническому идентификатору
+        model = genai.GenerativeModel(MODEL_NAME)
         
         clean_pos = await clean_data(position)
         prompt = f"Проанализируй DeFi позицию: {str(clean_pos)}. Дай краткие рекомендации на русском языке."
 
+        # Отправляем запрос
         response = model.generate_content(prompt)
         
         return response.text
 
     except Exception as e:
-        logger.error(f"Ошибка Gemini SDK: {e}")
-        # Выводим более подробную информацию для отладки, если она попадет в логи
-        return f"⚠️ Ошибка анализа: {type(e).__name__}"
+        logger.error(f"Ошибка Gemini (модель {MODEL_NAME}): {e}")
+        return f"⚠️ Ошибка анализа: проверьте модель в коде."
