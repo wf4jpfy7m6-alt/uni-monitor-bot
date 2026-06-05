@@ -1,12 +1,14 @@
 import os
-import aiohttp
-import json
 import logging
+import google.generativeai as genai
 import inspect
 
 logger = logging.getLogger(__name__)
 
+# Инициализация API
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
+genai.configure(api_key=GEMINI_API_KEY)
+model = genai.GenerativeModel('gemini-1.5-flash')
 
 async def clean_data(data):
     """Рекурсивная очистка данных от корутин."""
@@ -19,32 +21,19 @@ async def clean_data(data):
     return data
 
 async def analyze_position(position: dict, network: str = None) -> str:
-    """Анализ позиции через Gemini 1.5 Flash."""
+    """Анализ позиции через официальный SDK Google."""
     if not GEMINI_API_KEY:
         return "⚠️ Ошибка: GEMINI_API_KEY не задан."
 
     try:
         clean_pos = await clean_data(position)
-        prompt = f"Проанализируй DeFi позицию: {json.dumps(clean_pos, default=str)}. Дай краткие рекомендации на русском языке."
+        prompt = f"Проанализируй DeFi позицию: {str(clean_pos)}. Дай краткие рекомендации на русском языке."
 
-        # Используем обновленный идентификатор модели
-        url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash-latest:generateContent?key={GEMINI_API_KEY}"
+        # Генерация контента через официальный метод
+        response = model.generate_content(prompt)
         
-        payload = {
-            "contents": [{"parts": [{"text": prompt}]}]
-        }
-
-        async with aiohttp.ClientSession() as session:
-            async with session.post(url, json=payload, timeout=20) as resp:
-                response_text = await resp.text()
-                
-                if resp.status != 200:
-                    logger.error(f"Gemini API Error {resp.status}: {response_text}")
-                    return f"⚠️ Ошибка Gemini (код {resp.status})"
-                
-                data = json.loads(response_text)
-                return data["candidates"][0]["content"]["parts"][0]["text"]
+        return response.text
 
     except Exception as e:
-        logger.error(f"Ошибка в ai_analyst: {e}")
-        return "⚠️ Ошибка анализа"
+        logger.error(f"Критическая ошибка Gemini SDK: {e}")
+        return "⚠️ Ошибка анализа (API недоступно)"
