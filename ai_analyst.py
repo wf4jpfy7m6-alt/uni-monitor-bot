@@ -86,8 +86,8 @@ async def analyze_position(position: dict, network: str = None) -> str:
                     "content-type": "application/json",
                 },
                 json={
-                    # ИСПРАВЛЕНО: Используем точное официальное имя модели
-                    "model": "claude-3-5-sonnet-20241022",
+                    # СТРОГО ИСПРАВЛЕНО НА СТАБИЛЬНЫЙ LATEST ИДЕНТИФИКАТОР:
+                    "model": "claude-3-5-sonnet-latest",
                     "max_tokens": 800,
                     "messages": [{"role": "user", "content": prompt}],
                 },
