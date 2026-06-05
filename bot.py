@@ -1,7 +1,15 @@
 import os
+import sqlite3
+
+# --- 1. КРИТИЧЕСКИЙ ФИКС ПАПКИ ДЛЯ RAILWAY VOLUME ---
+# Создаем директорию для базы данных на постоянном диске в самую первую очередь,
+# чтобы любые другие импортируемые модули не падали при старте.
+DB_PATH = "/app/data/positions.db"
+os.makedirs(os.path.dirname(DB_PATH), exist_ok=True)
+
+# --- 2. ОСТАЛЬНЫЕ ИМПОРТЫ ---
 import asyncio
 import logging
-import sqlite3
 from telegram import Update, ReplyKeyboardMarkup, KeyboardButton, ReplyKeyboardRemove
 from telegram.ext import (
     Application,
@@ -12,6 +20,7 @@ from telegram.ext import (
     ConversationHandler
 )
 
+# Импорты наших внутренних модулей мониторинга
 from monitor import PositionMonitor
 from aerodrome_monitor import AerodromeMonitor
 from ai_analyst import analyze_position
@@ -36,12 +45,7 @@ BTN_REMOVE = "🔴 Удалить позицию"
 # Состояния диалога (States)
 CHOOSING_NETWORK, ENTERING_WALLET, ENTERING_GAUGE, CONFIRM_REMOVE = range(4)
 
-# --- Инициализация Базы Данных SQLite на постоянном диске ---
-DB_PATH = "/app/data/positions.db"
-
-# Гарантированно создаем папку для базы данных при старте скрипта
-os.makedirs(os.path.dirname(DB_PATH), exist_ok=True)
-
+# --- Инициализация Базы Данных SQLite ---
 def init_db():
     conn = sqlite3.connect(DB_PATH)
     cursor = conn.cursor()
@@ -54,7 +58,7 @@ def init_db():
         )
     """)
     
-    # Если база пустая, добавляем дефолтный стартовый конфиг
+    # Если база абсолютно пустая, добавляем дефолтный стартовый пул для мониторинга
     cursor.execute("SELECT COUNT(*) FROM positions")
     if cursor.fetchone()[0] == 0:
         cursor.execute(
@@ -90,7 +94,7 @@ async def get_all_positions():
         logger.error(f"Ошибка чтения БД: {e}")
         return []
 
-# --- Обработчики основных кнопок ---
+# --- Обработчики основных кнопок меню ---
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(
         "Привет! Я твой DeFi AI-Агент для мониторинга LP-позиций Uniswap V3 и Aerodrome.",
@@ -105,7 +109,6 @@ async def handle_status_request(update: Update, context: ContextTypes.DEFAULT_TY
         await update.message.reply_text("У вас нет добавленных позиций для мониторинга.")
         return
 
-    # Разделяем позиции по сетям
     arbitrum_wallets = [p[1] for p in positions if p[0] == "Arbitrum"]
     base_positions = [p for p in positions if p[0] == "Base (Aerodrome)"]
 
@@ -188,7 +191,6 @@ async def add_position_wallet(update: Update, context: ContextTypes.DEFAULT_TYPE
         )
         return ENTERING_GAUGE
     else:
-        # Для Arbitrum Gauge не нужен, сразу сохраняем
         return await save_position_to_db(update, context, None)
 
 async def add_position_gauge(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -216,7 +218,7 @@ async def save_position_to_db(update: Update, context: ContextTypes.DEFAULT_TYPE
         conn.close()
         
         await update.message.reply_text(
-            f"✅ Позиция успешно добавления в мониторинг!\nСЕТЬ: {network}\nКОШЕЛЕК: {wallet}\nGAUGE: {gauge or 'Нет'}",
+            f"✅ Позиция успешно добавлена в мониторинг!\nСЕТЬ: {network}\nКОШЕЛЕК: {wallet}\nGAUGE: {gauge or 'Нет'}",
             reply_markup=get_main_keyboard()
         )
     except Exception as e:
@@ -250,4 +252,79 @@ async def remove_position_start(update: Update, context: ContextTypes.DEFAULT_TY
 async def remove_position_confirm(update: Update, context: ContextTypes.DEFAULT_TYPE):
     text = update.message.text
     if not text or not text[0].isdigit():
-        await update.message.reply_text("Неверный выбор. Попробуйте снова или отмените опера
+        await update.message.reply_text("Неверный выбор. Попробуйте снова или отмените операцию.")
+        return CONFIRM_REMOVE
+        
+    idx = int(text.split('.')[0]) - 1
+    positions = context.user_data.get('active_positions_list', [])
+    
+    if 0 <= idx < len(positions):
+        target = positions[idx]
+        try:
+            conn = sqlite3.connect(DB_PATH)
+            cursor = conn.cursor()
+            cursor.execute(
+                "DELETE FROM positions WHERE network = ? AND wallet_address = ? AND (gauge_address = ? OR (gauge_address IS NULL AND ? IS NULL))",
+                (target[0], target[1], target[2], target[2])
+            )
+            conn.commit()
+            conn.close()
+            await update.message.reply_text(f"🗑 Позиция {text} успешно удалена.", reply_markup=get_main_keyboard())
+        except Exception as e:
+            await update.message.reply_text(f"❌ Ошибка удаления: {e}", reply_markup=get_main_keyboard())
+    else:
+        await update.message.reply_text("Позиция не найдена.", reply_markup=get_main_keyboard())
+        
+    return ConversationHandler.END
+
+async def cancel(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    await update.message.reply_text("Действие отменено.", reply_markup=get_main_keyboard())
+    return ConversationHandler.END
+
+# --- Текстовый роутер для обычных кнопок ---
+async def text_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    text = update.message.text
+    if text == BTN_STATUS:
+        await handle_status_request(update, context)
+    elif text == BTN_ANALYZE:
+        await handle_analyze_request(update, context)
+    else:
+        await update.message.reply_text("Используйте меню для управления ботом.", reply_markup=get_main_keyboard())
+
+def main():
+    if not TELEGRAM_TOKEN:
+        logger.error("Переменная среды TELEGRAM_TOKEN не задана!")
+        return
+
+    application = Application.builder().token(TELEGRAM_TOKEN).build()
+
+    # Conversation Handler для добавления позиций
+    add_conv = ConversationHandler(
+        entry_points=[MessageHandler(filters.Text(BTN_ADD), add_position_start)],
+        states={
+            CHOOSING_NETWORK: [MessageHandler(filters.Text(['Arbitrum', 'Base (Aerodrome)']), add_position_network)],
+            ENTERING_WALLET: [MessageHandler(filters.TEXT & ~filters.Text(['❌ Отмена']), add_position_wallet)],
+            ENTERING_GAUGE: [MessageHandler(filters.TEXT & ~filters.Text(['❌ Отмена']), add_position_gauge)]
+        },
+        fallbacks=[MessageHandler(filters.Text(['❌ Отмена', '/cancel']), cancel)]
+    )
+
+    # Conversation Handler для удаления позиций
+    remove_conv = ConversationHandler(
+        entry_points=[MessageHandler(filters.Text(BTN_REMOVE), remove_position_start)],
+        states={
+            CONFIRM_REMOVE: [MessageHandler(filters.TEXT & ~filters.Text(['❌ Отмена']), remove_position_confirm)]
+        },
+        fallbacks=[MessageHandler(filters.Text(['❌ Отмена', '/cancel']), cancel)]
+    )
+
+    application.add_handler(CommandHandler("start", start))
+    application.add_handler(add_conv)
+    application.add_handler(remove_conv)
+    application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, text_handler))
+
+    logger.info("Бот успешно запущен и готов к работе.")
+    application.run_polling()
+
+if __name__ == '__main__':
+    main()
