@@ -16,7 +16,7 @@ async def analyze_position(position: dict, network: str = None) -> str:
     in_range = position.get("in_range", False)
     status_text = "В ДИАПАЗОНЕ ✅" if in_range else "ВНЕ ДИАПАЗОНА 🚨"
     
-    # Определяем сеть: приоритет из словаря, затем из аргумента, иначе дефолт
+    # Определяем сеть
     pos_network = position.get("network", network or "DeFi")
 
     # Безопасно достаем комиссию пула (fee)
@@ -35,7 +35,7 @@ async def analyze_position(position: dict, network: str = None) -> str:
     else:
         range_status_detail = "Позиция активна и зарабатывает комиссии."
 
-    # Формируем четкий промпт для Claude
+    # Формируем промпт
     prompt = f"""Ты — DeFi-аналитик, специализирующийся на Uniswap v3 и Aerodrome Slipstream liquidity positions.
 
 Проанализируй позицию и дай конкретные рекомендации на русском языке.
@@ -86,8 +86,8 @@ async def analyze_position(position: dict, network: str = None) -> str:
                     "content-type": "application/json",
                 },
                 json={
-                    # СТРОГО ИСПРАВЛЕНО НА СТАБИЛЬНЫЙ LATEST ИДЕНТИФИКАТОР:
-                    "model": "claude-3-5-sonnet-latest",
+                    # Переключаемся на базовую доступную модель Claude 3 Haiku
+                    "model": "claude-3-haiku-20240307",
                     "max_tokens": 800,
                     "messages": [{"role": "user", "content": prompt}],
                 },
