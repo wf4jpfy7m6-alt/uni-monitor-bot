@@ -75,8 +75,8 @@ async def analyze_position(position: dict, network: str = None) -> str:
         logger.error("GEMINI_API_KEY не установлен в переменных окружения.")
         return "⚠️ Ошибка ИИ-анализа: на сервере не задан GEMINI_API_KEY в Variables панели Railway."
 
-    # Эндпоинт для работы с моделью Gemini 1.5 Flash
-    url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key={GEMINI_API_KEY}"
+    # ИСПРАВЛЕНО: Добавлен суффикс -latest, который требует v1beta
+    url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash-latest:generateContent?key={GEMINI_API_KEY}"
 
     try:
         async with aiohttp.ClientSession() as session:
@@ -101,7 +101,6 @@ async def analyze_position(position: dict, network: str = None) -> str:
 
                 data = await resp.json()
                 
-                # Парсим стандартную структуру ответа Google Gemini
                 try:
                     text_response = data["candidates"][0]["content"]["parts"][0]["text"]
                     return text_response
