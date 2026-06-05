@@ -8,7 +8,7 @@ os.makedirs(os.path.dirname(DB_PATH), exist_ok=True)
 # --- 2. ИМПОРТЫ ---
 import asyncio
 import logging
-from telegram import Update, ReplyKeyboardMarkup, KeyboardButton, ReplyKeyboardRemove
+from telegram import Update, ReplyKeyboardMarkup, KeyboardButton
 from telegram.ext import (
     Application,
     CommandHandler,
@@ -18,6 +18,7 @@ from telegram.ext import (
     ConversationHandler
 )
 
+# Импортируем твои мониторы и аналитика
 from monitor import PositionMonitor
 from aerodrome_monitor import AerodromeMonitor
 from ai_analyst import analyze_position
@@ -29,7 +30,6 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 TELEGRAM_TOKEN = os.getenv("TELEGRAM_TOKEN")
-CHAT_ID = os.getenv("CHAT_ID")
 
 BTN_STATUS = "📊 Статус позиций"
 BTN_ANALYZE = "🧠 AI Анализ"
@@ -80,7 +80,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         reply_markup=get_main_keyboard()
     )
 
-# --- Обработка кнопки "Статус позиций" ---
+# --- Универсальный и безопасный вывод статуса пулов ---
 async def handle_status_request(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text("🔄 Запрашиваю текущий статус пулов, подожди немного...")
     positions = await get_all_positions()
@@ -88,27 +88,45 @@ async def handle_status_request(update: Update, context: ContextTypes.DEFAULT_TY
         await update.message.reply_text("У вас нет добавленных позиций для мониторинга.")
         return
 
-    arbitrum_wallets = [p[1] for p in positions if p[0] == "Arbitrum"]
-    base_positions = [p for p in positions if p[0] == "Base (Aerodrome)"]
-
-    if arbitrum_wallets:
-        monitor = PositionMonitor()
-        for wallet in set(arbitrum_wallets):
+    for pos in positions:
+        net, wallet, gauge = pos[0], pos[1], pos[2]
+        
+        if net == "Arbitrum":
             try:
-                await monitor.check_positions(context.bot, update.message.chat_id, wallet_address=wallet, force_send=True)
+                monitor = PositionMonitor()
+                # Используем получение данных, чтобы не зависеть от названия метода отправки
+                active_positions = await monitor.get_all_positions(wallet)
+                if not active_positions:
+                    await update.message.reply_text(f"📦 *Arbitrum* ({wallet[:6]}...):\nАктивных позиций не найдено.", parse_mode="Markdown")
+                    continue
+                for p_data in active_positions:
+                    # Если внутри данных уже есть готовый текст, выводим его, иначе форматируем базово
+                    msg = p_data if isinstance(p_data, str) else f"Позиция найденна: {p_data}"
+                    await update.message.reply_text(msg)
             except Exception as e:
                 logger.error(f"Ошибка Arbitrum: {e}")
-                await update.message.reply_text(f"❌ Ошибка получения данных с Arbitrum: {e}")
+                await update.message.reply_text(f"❌ Ошибка данных Arbitrum ({wallet[:6]}...): {e}")
 
-    if base_positions:
-        for pos in base_positions:
+        elif net == "Base (Aerodrome)":
             try:
-                # Фикс: Передаем кошелек и gauge сразу в конструктор класса
-                aero_monitor = AerodromeMonitor(wallet_address=pos[1], gauge_address=pos[2])
-                await aero_monitor.check_positions(context.bot, update.message.chat_id, force_send=True)
+                # Инициализируем класс с параметрами, как требует твой конструктор
+                aero_monitor = AerodromeMonitor(wallet_address=wallet, gauge_address=gauge)
+                
+                # Запрашиваем данные через get_all_positions, который у тебя точно определён
+                active_positions = await aero_monitor.get_all_positions()
+                if not active_positions:
+                    await update.message.reply_text(f"🔵 *Base (Aerodrome)*:\nАктивных позиций не найдено.", parse_mode="Markdown")
+                    continue
+                
+                for p_data in active_positions:
+                    if isinstance(p_data, str):
+                        await update.message.reply_text(p_data)
+                    else:
+                        # На случай, если возвращается словарь/объект, выводим читаемо
+                        await update.message.reply_text(f"📊 *Пул Base найден:* {p_data}")
             except Exception as e:
                 logger.error(f"Ошибка Aerodrome: {e}")
-                await update.message.reply_text(f"❌ Ошибка получения данных с Base: {e}")
+                await update.message.reply_text(f"❌ Ошибка данных Base ({wallet[:6]}...): {e}")
 
 # --- Обработка кнопки "AI Анализ" ---
 async def handle_analyze_request(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -118,33 +136,30 @@ async def handle_analyze_request(update: Update, context: ContextTypes.DEFAULT_T
         await update.message.reply_text("Нет активных позиций для анализа.")
         return
 
-    arbitrum_wallets = [p[1] for p in positions if p[0] == "Arbitrum"]
-    base_positions = [p for p in positions if p[0] == "Base (Aerodrome)"]
-
-    if arbitrum_wallets:
-        monitor = PositionMonitor()
-        for wallet in set(arbitrum_wallets):
+    for pos in positions:
+        net, wallet, gauge = pos[0], pos[1], pos[2]
+        
+        if net == "Arbitrum":
             try:
+                monitor = PositionMonitor()
                 active_positions = await monitor.get_all_positions(wallet)
-                for pos in active_positions:
-                    await update.message.reply_text(analyze_position(pos, "Arbitrum"))
+                for p_data in active_positions:
+                    await update.message.reply_text(analyze_position(p_data, "Arbitrum"))
             except Exception as e:
                 logger.error(f"Ошибка ИИ Arbitrum: {e}")
                 await update.message.reply_text(f"❌ Ошибка ИИ-анализа Arbitrum: {e}")
 
-    if base_positions:
-        for pos in base_positions:
+        elif net == "Base (Aerodrome)":
             try:
-                # Фикс: Передаем кошелек и gauge сразу в конструктор класса для ИИ-анализа
-                aero_monitor = AerodromeMonitor(wallet_address=pos[1], gauge_address=pos[2])
+                aero_monitor = AerodromeMonitor(wallet_address=wallet, gauge_address=gauge)
                 active_positions = await aero_monitor.get_all_positions()
-                for pos_data in active_positions:
-                    await update.message.reply_text(analyze_position(pos_data, "Base (Aerodrome)"))
+                for p_data in active_positions:
+                    await update.message.reply_text(analyze_position(p_data, "Base (Aerodrome)"))
             except Exception as e:
                 logger.error(f"Ошибка ИИ Aerodrome: {e}")
                 await update.message.reply_text(f"❌ Ошибка ИИ-анализа Base: {e}")
 
-# --- Добавление позиции ---
+# --- Мастер добавления позиции ---
 async def add_position_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     reply_keyboard = [['Arbitrum', 'Base (Aerodrome)'], ['❌ Отмена']]
     await update.message.reply_text(
@@ -252,7 +267,9 @@ async def text_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await handle_analyze_request(update, context)
 
 def main():
-    if not TELEGRAM_TOKEN: return
+    if not TELEGRAM_TOKEN: 
+        logger.error("TELEGRAM_TOKEN не найден в переменных окружения!")
+        return
     application = Application.builder().token(TELEGRAM_TOKEN).build()
 
     add_conv = ConversationHandler(
@@ -275,6 +292,8 @@ def main():
     application.add_handler(add_conv)
     application.add_handler(remove_conv)
     application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, text_handler))
+    
+    logger.info("Бот успешно запущен и слушает команды...")
     application.run_polling()
 
 if __name__ == '__main__':
