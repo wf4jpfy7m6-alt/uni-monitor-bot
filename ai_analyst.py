@@ -19,11 +19,10 @@ async def analyze_position(position: dict, network: str = None) -> str:
     # Определяем сеть: приоритет из словаря, затем из аргумента, иначе дефолт
     pos_network = position.get("network", network or "DeFi")
 
-    # Безопасно достаем комиссию пула (fee). 
-    # Если в структуре Aerodrome её нет, подставляем дефолтное "0.05"
+    # Безопасно достаем комиссию пула (fee)
     fee_val = position.get("fee", "0.05")
 
-    # Извлекаем числовые значения для анализа (с дефолтными нулями, чтобы избежать ошибок вычислений)
+    # Извлекаем числовые значения для анализа
     current_price = position.get("current_price", 0.0)
     price_lower = position.get("price_lower", 0.0)
     price_upper = position.get("price_upper", 0.0)
@@ -73,7 +72,6 @@ async def analyze_position(position: dict, network: str = None) -> str:
 
 Будь конкретен, используй числа из данных позиции. Не пиши лишнего."""
 
-    # Если ключ забыли добавить в панели управления Railway
     if not ANTHROPIC_API_KEY:
         logger.error("ANTHROPIC_API_KEY не установлен в переменных окружения.")
         return "⚠️ Ошибка ИИ-анализа: на сервере не задан ANTHROPIC_API_KEY в Variables."
@@ -88,13 +86,13 @@ async def analyze_position(position: dict, network: str = None) -> str:
                     "content-type": "application/json",
                 },
                 json={
+                    # ИСПРАВЛЕНО: Используем точное официальное имя модели
                     "model": "claude-3-5-sonnet-20241022",
                     "max_tokens": 800,
                     "messages": [{"role": "user", "content": prompt}],
                 },
             ) as resp:
                 
-                # Если Anthropic вернул ошибку (например, 400 или 401)
                 if resp.status != 200:
                     err_body = await resp.text()
                     logger.error(f"Ошибка API Anthropic (Статус {resp.status}): {err_body}")
