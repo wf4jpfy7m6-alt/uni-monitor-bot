@@ -5,12 +5,12 @@ import logging
 
 logger = logging.getLogger(__name__)
 
-# Берём API-ключ из переменных окружения Railway
-ANTHROPIC_API_KEY = os.getenv("ANTHROPIC_API_KEY")
+# Берём API-ключ Gemini из переменных окружения Railway
+GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
 
 async def analyze_position(position: dict, network: str = None) -> str:
     """
-    Отправляет данные позиции в Claude и получает структурированный анализ.
+    Отправляет данные позиции в Gemini 1.5 Flash и получает структурированный анализ.
     """
     # Безопасное извлечение статуса диапазона
     in_range = position.get("in_range", False)
@@ -36,9 +36,8 @@ async def analyze_position(position: dict, network: str = None) -> str:
         range_status_detail = "Позиция активна и зарабатывает комиссии."
 
     # Формируем промпт
-    prompt = f"""Ты — DeFi-аналитик, специализирующийся на Uniswap v3 и Aerodrome Slipstream liquidity positions.
-
-Проанализируй позицию и дай конкретные рекомендации на русском языке.
+    prompt = f"""Ты — высококлассный DeFi-аналитик, специализирующийся на Uniswap v3 и Aerodrome Slipstream liquidity positions.
+Проанализируй текущую LP-позицию и дай конкретные рекомендации на русском языке.
 
 ДАННЫЕ ПОЗИЦИИ:
 - Пара: {position.get('token0', 'WETH')}/{position.get('token1', 'USDC')}
@@ -52,59 +51,64 @@ async def analyze_position(position: dict, network: str = None) -> str:
 
 {range_status_detail}
 
-Дай ответ строго в таком формате:
+Ответь строго в таком формате (используй Markdown-разметку для Telegram):
 
 📊 *Ситуация:*
-[1-2 предложения о текущем положении]
+[1-2 предложения о текущем положении пула и цены]
 
 🎯 *Варианты действий:*
 1️⃣ [Вариант 1 — название]
-→ [Описание что делать]
+→ [Описание что конкретно делать]
 
 2️⃣ [Вариант 2 — название]  
-→ [Описание что делать]
+→ [Описание что конкретно делать]
 
 3️⃣ [Вариант 3 — название]
-→ [Описание что делать]
+→ [Описание что конкретно делать]
 
 💡 *Рекомендация:*
-[Что советуешь и почему, 1-2 предложения]
+[Что советуешь сделать в первую очередь и почему, 1-2 предложения]
 
-Будь конкретен, используй числа из данных позиции. Не пиши лишнего."""
+Будь конкретен, используй числа из данных позиции. Не пиши никакого вводного или заключительного текста, только этот шаблон."""
 
-    if not ANTHROPIC_API_KEY:
-        logger.error("ANTHROPIC_API_KEY не установлен в переменных окружения.")
-        return "⚠️ Ошибка ИИ-анализа: на сервере не задан ANTHROPIC_API_KEY в Variables."
+    if not GEMINI_API_KEY:
+        logger.error("GEMINI_API_KEY не установлен в переменных окружения.")
+        return "⚠️ Ошибка ИИ-анализа: на сервере не задан GEMINI_API_KEY в Variables панели Railway."
+
+    # Эндпоинт для работы с моделью Gemini 1.5 Flash
+    url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key={GEMINI_API_KEY}"
 
     try:
         async with aiohttp.ClientSession() as session:
             async with session.post(
-                "https://api.anthropic.com/v1/messages",
-                headers={
-                    "x-api-key": ANTHROPIC_API_KEY,
-                    "anthropic-version": "2023-06-01",
-                    "content-type": "application/json",
-                },
+                url,
+                headers={"Content-Type": "application/json"},
                 json={
-                    # Переключаемся на базовую доступную модель Claude 3 Haiku
-                    "model": "claude-3-haiku-20240307",
-                    "max_tokens": 800,
-                    "messages": [{"role": "user", "content": prompt}],
-                },
+                    "contents": [{
+                        "parts": [{"text": prompt}]
+                    }],
+                    "generationConfig": {
+                        "temperature": 0.2,
+                        "maxOutputTokens": 1000
+                    }
+                }
             ) as resp:
                 
                 if resp.status != 200:
                     err_body = await resp.text()
-                    logger.error(f"Ошибка API Anthropic (Статус {resp.status}): {err_body}")
-                    return f"⚠️ Anthropic API вернул ошибку (Статус {resp.status}). Проверь логи."
+                    logger.error(f"Ошибка API Gemini (Статус {resp.status}): {err_body}")
+                    return f"⚠️ Gemini API вернул ошибку (Статус {resp.status}). Проверь логи Railway."
 
                 data = await resp.json()
-                if "content" in data and len(data["content"]) > 0:
-                    return data["content"][0]["text"]
-                else:
-                    logger.error(f"Неожиданная структура ответа API: {data}")
-                    return "⚠️ Не удалось получить текст анализа. Проверь логи сервера."
+                
+                # Парсим стандартную структуру ответа Google Gemini
+                try:
+                    text_response = data["candidates"][0]["content"]["parts"][0]["text"]
+                    return text_response
+                except (KeyError, IndexError) as parse_err:
+                    logger.error(f"Неожиданная структура ответа от Gemini: {data}. Ошибка: {parse_err}")
+                    return "⚠️ Не удалось разобрать ответ от ИИ-модели. Проверь структуру в логах."
 
     except Exception as e:
-        logger.error(f"Критическая ошибка AI анализа: {e}")
+        logger.error(f"Критическая ошибка при вызове Gemini API: {e}")
         return f"⚠️ Ошибка анализа: {str(e)}"
