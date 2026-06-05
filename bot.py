@@ -238,11 +238,11 @@ def main():
     add_conv = ConversationHandler(
         entry_points=[MessageHandler(filters.Text(BTN_ADD), add_position_start)],
         states={
-            CHOOSING_NETWORK: [MessageHandler(filters.Text(['Arbitrum', 'Base (Aerodrome)']), add_position_network)],
-            ENTERING_WALLET: [MessageHandler(filters.TEXT & ~filters.Text(['❌ Отмена']), add_position_wallet)],
-            ENTERING_GAUGE: [MessageHandler(filters.TEXT & ~filters.Text(['❌ Отмена']), add_position_gauge)]
+            CHOOSING_NETWORK: [MessageHandler(filters.Text(['Arbitrum', 'Base (Aerodrome)']) & ~filters.Text(['❌ Отмена']), add_position_network)],
+            ENTERING_WALLET: [MessageHandler(filters.TEXT & ~filters.COMMAND & ~filters.Text(['❌ Отмена']), add_position_wallet)],
+            ENTERING_GAUGE: [MessageHandler(filters.TEXT & ~filters.COMMAND & ~filters.Text(['❌ Отмена']), add_position_gauge)]
         },
-        fallbacks=[MessageHandler(filters.Text(['❌ Отмена', '/cancel']), cancel)]
+        fallbacks=[MessageHandler(filters.Text(['❌ Отмена']) | filters.COMMAND, cancel)]
     )
 
     remove_conv = ConversationHandler(
