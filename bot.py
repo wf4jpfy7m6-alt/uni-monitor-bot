@@ -80,42 +80,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         reply_markup=get_main_keyboard()
     )
 
-# --- Динамический вызов методов монитора пулов ---
-async def fetch_monitor_data(monitor_obj, wallet=None):
-    """
-    Пытается вызвать любой подходящий метод у монитора, так как 
-    точные названия методов в модулях aerodrome_monitor/monitor могут отличаться.
-    """
-    # Список возможных названий методов сбора данных
-    possible_methods = [
-        'check_position', 'check_positions', 
-        'get_position', 'get_positions', 
-        'get_all_positions', 'fetch_positions'
-    ]
-    
-    for method_name in possible_methods:
-        method = getattr(monitor_obj, method_name, None)
-        if method and callable(method):
-            try:
-                # Проверяем, принимает ли метод адрес кошелька (для PositionMonitor)
-                if wallet:
-                    res = method(wallet)
-                else:
-                    res = method()
-                
-                # Если метод асинхронный (coroutine), дожидаемся его выполнения
-                if asyncio.iscoroutine(res) or inspect.iscoroutinefunction(method):
-                    return await res
-                return res
-            except Exception as e:
-                logger.warning(f"Метод {method_name} вызвал ошибку: {e}")
-                continue
-                
-    # Если ни один метод не подошел, возвращаем список доступных атрибутов для отладки
-    available = [m for m in dir(monitor_obj) if not m.startswith('_')]
-    raise AttributeError(f"Не найден метод сбора данных. Доступные методы класса: {available}")
-
-# --- Универсальный и безопасный вывод статуса пулов ---
+# --- Вывод статуса пулов ---
 async def handle_status_request(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text("🔄 Запрашиваю текущий статус пулов, подожди немного...")
     positions = await get_all_positions()
@@ -129,41 +94,55 @@ async def handle_status_request(update: Update, context: ContextTypes.DEFAULT_TY
         if net == "Arbitrum":
             try:
                 monitor = PositionMonitor()
-                active_positions = await fetch_monitor_data(monitor, wallet=wallet)
-                
+                # Для Arbitrum вызываем его родной метод (предполагаем get_all_positions или аналогичный)
+                if hasattr(monitor, 'get_all_positions'):
+                    active_positions = await monitor.get_all_positions(wallet)
+                elif hasattr(monitor, 'get_positions'):
+                    active_positions = await monitor.get_positions(wallet)
+                else:
+                    active_positions = []
+
                 if not active_positions:
                     await update.message.reply_text(f"📦 *Arbitrum* ({wallet[:6]}...):\nАктивных позиций не найдено.", parse_mode="Markdown")
                     continue
                 
-                # Если вернулся массив данных
-                if isinstance(active_positions, list):
-                    for p_data in active_positions:
-                        msg = p_data if isinstance(p_data, str) else f"Позиция Arbitrum: {p_data}"
-                        await update.message.reply_text(msg)
-                else:
-                    await update.message.reply_text(str(active_positions))
+                for p_data in active_positions:
+                    msg = p_data if isinstance(p_data, str) else f"Позиция Arbitrum: {p_data}"
+                    await update.message.reply_text(msg)
             except Exception as e:
                 logger.error(f"Ошибка Arbitrum: {e}")
-                await update.message.reply_text(f"❌ Ошибка данных Arbitrum ({wallet[:6]}...):\n{e}")
+                await update.message.reply_text(f"❌ Ошибка данных Arbitrum ({wallet[:6]}...): {e}")
 
         elif net == "Base (Aerodrome)":
             try:
+                # Инициализируем твой класс с кошельком и gauge
                 aero_monitor = AerodromeMonitor(wallet_address=wallet, gauge_address=gauge)
-                active_positions = await fetch_monitor_data(aero_monitor)
+                
+                # Точно вызываем существующий асинхронный метод get_positions() из твоего файла
+                active_positions = await aero_monitor.get_positions()
                 
                 if not active_positions:
                     await update.message.reply_text(f"🔵 *Base (Aerodrome)*:\nАктивных позиций не найдено.", parse_mode="Markdown")
                     continue
                 
-                if isinstance(active_positions, list):
-                    for p_data in active_positions:
-                        msg = p_data if isinstance(p_data, str) else f"📊 *Пул Base найден:* {p_data}"
-                        await update.message.reply_text(msg)
-                else:
-                    await update.message.reply_text(str(active_positions))
+                # Разбираем массив словарей, который возвращает aerodrome_monitor.py
+                for p in active_positions:
+                    range_status = "✅ В диапазоне" if p.get("in_range") else "❌ Вне диапазона"
+                    
+                    report_msg = (
+                        f"🌐 *Сеть:* {p.get('network')}\n"
+                        f"🆔 *NFT ID:* `{p.get('token_id')}`\n"
+                        f"💱 *Пара:* {p.get('token0')} / {p.get('token1')}\n"
+                        f"📊 *Статус:* {range_status}\n\n"
+                        f"📉 *Нижняя граница:* {p.get('price_lower'):,}\n"
+                        f"📈 *Верхняя граница:* {p.get('price_upper'):,}\n"
+                        f"💰 *Текущая цена:* {p.get('current_price'):,}\n\n"
+                        f"💵 *Общая стоимость:* ${p.get('value_usd'):,.2f}"
+                    )
+                    await update.message.reply_text(report_msg, parse_mode="Markdown")
             except Exception as e:
                 logger.error(f"Ошибка Aerodrome: {e}")
-                await update.message.reply_text(f"❌ Ошибка данных Base ({wallet[:6]}...):\n{e}")
+                await update.message.reply_text(f"❌ Ошибка данных Base ({wallet[:6]}...): {e}")
 
 # --- Обработка кнопки "AI Анализ" ---
 async def handle_analyze_request(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -179,12 +158,11 @@ async def handle_analyze_request(update: Update, context: ContextTypes.DEFAULT_T
         if net == "Arbitrum":
             try:
                 monitor = PositionMonitor()
-                active_positions = await fetch_monitor_data(monitor, wallet=wallet)
-                if isinstance(active_positions, list):
+                method = getattr(monitor, 'get_all_positions', getattr(monitor, 'get_positions', None))
+                if method:
+                    active_positions = await method(wallet) if asyncio.iscoroutinefunction(method) else method(wallet)
                     for p_data in active_positions:
                         await update.message.reply_text(analyze_position(p_data, "Arbitrum"))
-                else:
-                    await update.message.reply_text(analyze_position(active_positions, "Arbitrum"))
             except Exception as e:
                 logger.error(f"Ошибка ИИ Arbitrum: {e}")
                 await update.message.reply_text(f"❌ Ошибка ИИ-анализа Arbitrum: {e}")
@@ -192,12 +170,9 @@ async def handle_analyze_request(update: Update, context: ContextTypes.DEFAULT_T
         elif net == "Base (Aerodrome)":
             try:
                 aero_monitor = AerodromeMonitor(wallet_address=wallet, gauge_address=gauge)
-                active_positions = await fetch_monitor_data(aero_monitor)
-                if isinstance(active_positions, list):
-                    for p_data in active_positions:
-                        await update.message.reply_text(analyze_position(p_data, "Base (Aerodrome)"))
-                else:
-                    await update.message.reply_text(analyze_position(active_positions, "Base (Aerodrome)"))
+                active_positions = await aero_monitor.get_positions()
+                for p_data in active_positions:
+                    await update.message.reply_text(analyze_position(p_data, "Base (Aerodrome)"))
             except Exception as e:
                 logger.error(f"Ошибка ИИ Aerodrome: {e}")
                 await update.message.reply_text(f"❌ Ошибка ИИ-анализа Base: {e}")
