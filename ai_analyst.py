@@ -35,7 +35,7 @@ async def analyze_position(position: dict, network: str = None) -> str:
     else:
         range_status_detail = "Позиция активна и зарабатывает комиссии."
 
-    # Формируем промпт
+    # Формируем промпт для анализа
     prompt = f"""Ты — высококлассный DeFi-аналитик, специализирующийся на Uniswap v3 и Aerodrome Slipstream liquidity positions.
 Проанализируй текущую LP-позицию и дай конкретные рекомендации на русском языке.
 
@@ -75,8 +75,8 @@ async def analyze_position(position: dict, network: str = None) -> str:
         logger.error("GEMINI_API_KEY не установлен в переменных окружения.")
         return "⚠️ Ошибка ИИ-анализа: на сервере не задан GEMINI_API_KEY в Variables панели Railway."
 
-    # ИСПРАВЛЕНО: Добавлен суффикс -latest, который требует v1beta
-    url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash-latest:generateContent?key={GEMINI_API_KEY}"
+    # СТРОГО ПРАВИЛЬНЫЙ URL: модель идет через слэш, ключ передается параметром
+    url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key={GEMINI_API_KEY}"
 
     try:
         async with aiohttp.ClientSession() as session:
@@ -101,6 +101,7 @@ async def analyze_position(position: dict, network: str = None) -> str:
 
                 data = await resp.json()
                 
+                # Извлекаем сгенерированный текст из ответа Google
                 try:
                     text_response = data["candidates"][0]["content"]["parts"][0]["text"]
                     return text_response
