@@ -38,7 +38,7 @@ CHOOSING_NETWORK, ENTERING_WALLET, ENTERING_GAUGE, CONFIRM_REMOVE = range(4)
 position_states = {}
 
 # ── Инициализация Базы Данных SQLite ──────────────────────────────────────────
-DB_PATH = "positions.db"
+DB_PATH = "/app/data/positions.db"
 
 def init_db():
     conn = sqlite3.connect(DB_PATH)
