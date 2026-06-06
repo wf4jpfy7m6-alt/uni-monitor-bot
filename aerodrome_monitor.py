@@ -13,7 +13,7 @@ logger = logging.getLogger(__name__)
 # ── Конфигурация контрактов ───────────────────────────────────────────────────
 RPC_URL = "https://base.publicnode.com"
 POOL_ADDRESS    = Web3.to_checksum_address("0xb2cc224c1c9fee385f8ad6a55b4d94e92359dc59")
-GAUGE_ADDRESS   = Web3.to_checksum_address("0x7f694ca698946765cbef914565780d6f272a2dfc")
+GAUGE_ADDRESS   = Web3.to_checksum_address("0xA0B61fdB9f1FB9b917Fe38b49427Fd4D87472D28")
 POSITION_MANAGER_ADDRESS = Web3.to_checksum_address("0x827922686190790b37229fd06084350E74485b72")
 
 ARB_RPC_URL  = "https://arb1.arbitrum.io/rpc"
@@ -37,9 +37,7 @@ POOL_ABI = [
     },
 ]
 
-# ИСПРАВЛЕННЫЙ ABI — методы реального CLGauge контракта Aerodrome
 GAUGE_ABI = [
-    # Возвращает список застейканных NFT ID для адреса — ГЛАВНЫЙ МЕТОД
     {
         "inputs": [{"internalType": "address", "name": "depositor", "type": "address"}],
         "name": "stakedValues",
@@ -47,7 +45,6 @@ GAUGE_ABI = [
         "stateMutability": "view",
         "type": "function"
     },
-    # Сколько AERO-наград накоплено
     {
         "inputs": [{"internalType": "address", "name": "account", "type": "address"}],
         "name": "earned",
@@ -155,7 +152,6 @@ class AerodromeMonitor:
             return 1770.0
 
     def _get_positions_sync(self) -> list:
-        # 1. Текущая цена ETH из пула Base
         eth_price_usdc = 0.0
         sqrt_price_x96 = 0
         base_ok = True
@@ -174,7 +170,6 @@ class AerodromeMonitor:
         if base_ok:
             token_ids: list[tuple[int, bool]] = []
 
-            # А. Застейканные NFT через stakedValues — ПРАВИЛЬНЫЙ метод CLGauge
             try:
                 staked_ids = self.gauge_contract.functions.stakedValues(self.wallet).call()
                 logger.info(f"Gauge stakedValues вернул: {staked_ids}")
@@ -183,7 +178,6 @@ class AerodromeMonitor:
             except Exception as e:
                 logger.error(f"Gauge stakedValues ошибка: {type(e).__name__}: {e}")
 
-            # Б. Незастейканные NFT на кошельке
             try:
                 balance = self.nfpm_contract.functions.balanceOf(self.wallet).call()
                 for i in range(balance):
@@ -192,11 +186,9 @@ class AerodromeMonitor:
             except Exception as e:
                 logger.warning(f"NFPM balanceOf ошибка: {e}")
 
-            # В. Читаем данные каждого NFT из Position Manager
             for token_id, is_staked in token_ids:
                 try:
                     pos = self.nfpm_contract.functions.positions(token_id).call()
-                    # pos[5]=tickLower, pos[6]=tickUpper, pos[7]=liquidity
                     tick_lower = int(pos[5])
                     tick_upper = int(pos[6])
                     liquidity  = int(pos[7])
@@ -230,7 +222,6 @@ class AerodromeMonitor:
             if parsed_positions:
                 return parsed_positions
 
-        # Фоллбек — жёстко прописанные значения если Base RPC недоступен
         if eth_price_usdc == 0.0:
             eth_price_usdc = self._get_eth_price_fallback()
 
