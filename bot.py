@@ -94,9 +94,9 @@ async def handle_status_request(update: Update, context: ContextTypes.DEFAULT_TY
             try:
                 monitor = PositionMonitor(wallet_address=wallet)
                 if hasattr(monitor, 'get_all_positions'):
-                    active_positions = await monitor.get_all_positions(wallet)
+                    active_positions = await monitor.get_all_positions()
                 elif hasattr(monitor, 'get_positions'):
-                    active_positions = await monitor.get_positions(wallet)
+                    active_positions = await monitor.get_positions()
                 else:
                     active_positions = []
 
@@ -153,7 +153,7 @@ async def handle_analyze_request(update: Update, context: ContextTypes.DEFAULT_T
                 monitor = PositionMonitor(wallet_address=wallet)
                 method = getattr(monitor, 'get_all_positions', getattr(monitor, 'get_positions', None))
                 if method:
-                    active_positions = await method(wallet) if asyncio.iscoroutinefunction(method) else method(wallet)
+                    active_positions = await method() if asyncio.iscoroutinefunction(method) else method()
                     for p_data in active_positions:
                         analysis_res = await analyze_position(p_data, "Arbitrum")
                         await update.message.reply_text(analysis_res, parse_mode="Markdown")
