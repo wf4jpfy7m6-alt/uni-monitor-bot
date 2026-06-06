@@ -5,6 +5,7 @@ from web3 import Web3
 
 logger = logging.getLogger(__name__)
 
+# --- ВАШИ КОНСТАНТЫ ---
 SUBGRAPHS = {
     "Arbitrum": "https://api.thegraph.com/subgraphs/name/ianlapham/arbitrum-minimal",
     "Base": "https://api.studio.thegraph.com/query/48211/uniswap-v3-base/version/latest",
@@ -24,10 +25,10 @@ class PositionMonitor:
         self.web3_clients = {network: Web3(Web3.HTTPProvider(rpc)) for network, rpc in RPC_URLS.items()}
 
     async def get_all_positions(self) -> list:
-        # Мониторинг обеих сетей
-        positions = await self._get_positions_on_network("Base", self.web3_clients["Base"])
-        positions.extend(await self._get_arbitrum_positions_subgraph())
-        return positions
+        # Собираем данные из Aerodrome (Base) и Uniswap (Arbitrum)
+        base_pos = await self._get_positions_on_network("Base", self.web3_clients["Base"])
+        arb_pos = await self._get_arbitrum_positions_subgraph()
+        return base_pos + arb_pos
 
     async def _get_arbitrum_positions_subgraph(self) -> list:
         query = """{ positions(where: {owner: "%s"}) { id liquidity pool { token0 { symbol } token1 { symbol } } } }""" % self.wallet.lower()
@@ -51,7 +52,6 @@ class PositionMonitor:
             positions = []
             for i in range(balance):
                 token_id = await loop.run_in_executor(None, pm.functions.tokenOfOwnerByIndex(self.wallet, i).call)
-                # Упрощенная логика для сбора базовых данных
                 positions.append({"token_id": token_id, "network": network})
             return positions
         except Exception as e:
