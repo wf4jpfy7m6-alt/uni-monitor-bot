@@ -92,7 +92,7 @@ async def handle_status_request(update: Update, context: ContextTypes.DEFAULT_TY
 
         if net == "Arbitrum":
             try:
-                monitor = PositionMonitor()
+               monitor = PositionMonitor(wallet_address=wallet)
                 if hasattr(monitor, 'get_all_positions'):
                     active_positions = await monitor.get_all_positions(wallet)
                 elif hasattr(monitor, 'get_positions'):
@@ -150,7 +150,7 @@ async def handle_analyze_request(update: Update, context: ContextTypes.DEFAULT_T
 
         if net == "Arbitrum":
             try:
-                monitor = PositionMonitor()
+                monitor = PositionMonitor(wallet_address=wallet)
                 method = getattr(monitor, 'get_all_positions', getattr(monitor, 'get_positions', None))
                 if method:
                     active_positions = await method(wallet) if asyncio.iscoroutinefunction(method) else method(wallet)
