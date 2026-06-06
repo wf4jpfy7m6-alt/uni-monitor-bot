@@ -92,7 +92,7 @@ async def handle_status_request(update: Update, context: ContextTypes.DEFAULT_TY
 
         if net == "Arbitrum":
             try:
-               monitor = PositionMonitor(wallet_address=wallet)
+                monitor = PositionMonitor(wallet_address=wallet)
                 if hasattr(monitor, 'get_all_positions'):
                     active_positions = await monitor.get_all_positions(wallet)
                 elif hasattr(monitor, 'get_positions'):
