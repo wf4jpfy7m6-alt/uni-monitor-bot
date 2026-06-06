@@ -104,9 +104,19 @@ async def handle_status_request(update: Update, context: ContextTypes.DEFAULT_TY
                     await update.message.reply_text(f"📦 *Arbitrum* ({wallet[:6]}...):\nАктивных позиций не найдено.", parse_mode="Markdown")
                     continue
 
-                for p_data in active_positions:
-                    msg = p_data if isinstance(p_data, str) else f"Позиция Arbitrum: {p_data}"
-                    await update.message.reply_text(msg)
+                for p in active_positions:
+                    range_status = "✅ В диапазоне" if p.get("in_range") else "❌ Вне диапазона"
+                    report_msg = (
+                        f"🌐 *Сеть:* {p.get('network')}\n"
+                        f"🆔 *NFT ID:* `{p.get('token_id')}`\n"
+                        f"💱 *Пара:* {p.get('token0')} / {p.get('token1')}\n"
+                        f"📊 *Статус:* {range_status}\n\n"
+                        f"📉 *Нижняя граница:* {p.get('price_lower'):,}\n"
+                        f"📈 *Верхняя граница:* {p.get('price_upper'):,}\n"
+                        f"💰 *Текущая цена:* {p.get('current_price'):,}\n\n"
+                        f"💵 *Общая стоимость:* ${p.get('value_usd'):,.2f}"
+                    )
+                    await update.message.reply_text(report_msg, parse_mode="Markdown")
             except Exception as e:
                 logger.error(f"Ошибка Arbitrum: {e}")
                 await update.message.reply_text(f"❌ Ошибка данных Arbitrum ({wallet[:6]}...): {e}")
