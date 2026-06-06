@@ -5,15 +5,17 @@ from web3 import Web3
 
 logger = logging.getLogger(__name__)
 
-# --- КОНСТАНТЫ ---
+# Эндпоинты для стабильного получения данных
 SUBGRAPHS = {
     "Arbitrum": "https://api.thegraph.com/subgraphs/name/ianlapham/arbitrum-minimal",
     "Base": "https://api.studio.thegraph.com/query/48211/uniswap-v3-base/version/latest",
 }
+
+# Ваши оригинальные параметры
 RPC_URLS = {"Arbitrum": "https://arb1.arbitrum.io/rpc", "Base": "https://mainnet.base.org"}
 POSITION_MANAGER_ADDRESSES = {"Arbitrum": "0xC36442b4a4522E871399CD717aBDD847Ab11FE88", "Base": "0x827922686190790b37229fd06084350E74485b72"}
 
-# --- ABI ---
+# ABI (ваши стандартные)
 POSITION_MANAGER_ABI = [{"inputs": [{"internalType": "uint256", "name": "tokenId", "type": "uint256"}], "name": "positions", "outputs": [{"internalType": "uint96", "name": "nonce", "type": "uint96"}, {"internalType": "address", "name": "operator", "type": "address"}, {"internalType": "address", "name": "token0", "type": "address"}, {"internalType": "address", "name": "token1", "type": "address"}, {"internalType": "uint24", "name": "fee", "type": "uint24"}, {"internalType": "int24", "name": "tickLower", "type": "int24"}, {"internalType": "int24", "name": "tickUpper", "type": "int24"}, {"internalType": "uint128", "name": "liquidity", "type": "uint128"}, {"internalType": "uint256", "name": "feeGrowthInside0LastX128", "type": "uint256"}, {"internalType": "uint256", "name": "feeGrowthInside1LastX128", "type": "uint256"}, {"internalType": "uint128", "name": "tokensOwed0", "type": "uint128"}, {"internalType": "uint128", "name": "tokensOwed1", "type": "uint128"}], "stateMutability": "view", "type": "function"}, {"inputs": [{"internalType": "address", "name": "owner", "type": "address"}], "name": "balanceOf", "outputs": [{"internalType": "uint256", "name": "", "type": "uint256"}], "stateMutability": "view", "type": "function"}, {"inputs": [{"internalType": "address", "name": "owner", "type": "address"}, {"internalType": "uint256", "name": "index", "type": "uint256"}], "name": "tokenOfOwnerByIndex", "outputs": [{"internalType": "uint256", "name": "", "type": "uint256"}], "stateMutability": "view", "type": "function"}]
 
 class PositionMonitor:
@@ -22,12 +24,13 @@ class PositionMonitor:
         self.web3_clients = {network: Web3(Web3.HTTPProvider(rpc)) for network, rpc in RPC_URLS.items()}
 
     async def get_all_positions(self) -> list:
-        # Мониторим Base через RPC и Arbitrum через Subgraph
-        positions = await self._get_positions_on_network("Base", self.web3_clients["Base"])
-        positions.extend(await self._get_arbitrum_positions_subgraph())
-        return positions
+        # Собираем данные из обоих источников
+        base_pos = await self._get_positions_on_network("Base", self.web3_clients["Base"])
+        arb_pos = await self._get_arbitrum_positions_subgraph()
+        return base_pos + arb_pos
 
     async def _get_arbitrum_positions_subgraph(self) -> list:
+        """Стабильное получение позиций через Subgraph."""
         query = """{ positions(where: {owner: "%s"}) { id liquidity pool { token0 { symbol } token1 { symbol } } } }""" % self.wallet.lower()
         try:
             async with aiohttp.ClientSession() as session:
