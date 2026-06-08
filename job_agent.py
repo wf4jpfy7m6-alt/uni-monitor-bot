@@ -4,6 +4,11 @@ import requests
 token = os.getenv("JOB_TG_TOKEN")
 chat_id = os.getenv("JOB_TG_CHAT_ID")
 
+SEARCH_TERMS = [
+    "Reinigungskraft",
+    "Laborhilfe"
+]
+
 url = "https://rest.arbeitsagentur.de/jobboerse/jobsuche-service/pc/v4/jobs"
 
 headers = {
@@ -12,36 +17,48 @@ headers = {
     "X-API-Key": "jobboerse-jobsuche"
 }
 
-params = {
-    "was": "Reinigungskraft",
-    "wo": "Wilhelmshaven",
-    "umkreis": 40
-}
+messages = []
 
-r = requests.get(url, headers=headers, params=params)
+for keyword in SEARCH_TERMS:
 
-data = r.json()
+    params = {
+        "was": keyword,
+        "wo": "Wilhelmshaven",
+        "umkreis": 40
+    }
 
-jobs = data.get("stellenangebote", [])
+    r = requests.get(
+        url,
+        headers=headers,
+        params=params,
+        timeout=30
+    )
 
-if jobs:
-    job = jobs[0]
+    data = r.json()
 
-    title = job.get("titel", "")
-    company = job.get("arbeitgeber", "")
-    city = job.get("arbeitsort", {}).get("ort", "")
+    jobs = data.get("stellenangebote", [])
 
-    text = f"ТЕСТ ВАКАНСИИ\n\n{title}\n{company}\n{city}"
+    messages.append(f"{keyword}: {len(jobs)} вакансий")
 
-else:
-    text = "Вакансии не найдены"
+    for job in jobs[:3]:
+
+        title = job.get("titel", "")
+        company = job.get("arbeitgeber", "")
+        city = job.get("arbeitsort", {}).get("ort", "")
+
+        messages.append(
+            f"{title}\n{company}\n{city}"
+        )
+
+text = "\n\n".join(messages)
 
 requests.post(
     f"https://api.telegram.org/bot{token}/sendMessage",
     json={
         "chat_id": chat_id,
         "text": text
-    }
+    },
+    timeout=30
 )
 
-print("Jobs:", len(jobs))
+print("DONE")
