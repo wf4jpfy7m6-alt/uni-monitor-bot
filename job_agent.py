@@ -4,11 +4,6 @@ import requests
 token = os.getenv("JOB_TG_TOKEN")
 chat_id = os.getenv("JOB_TG_CHAT_ID")
 
-SEARCH_TERMS = [
-    "Reinigungskraft",
-    "Laborhilfe"
-]
-
 url = "https://rest.arbeitsagentur.de/jobboerse/jobsuche-service/pc/v4/jobs"
 
 headers = {
@@ -17,46 +12,56 @@ headers = {
     "X-API-Key": "jobboerse-jobsuche"
 }
 
-messages = []
+params = {
+    "was": "Reinigungskraft",
+    "wo": "Wilhelmshaven",
+    "umkreis": 40
+}
 
-for keyword in SEARCH_TERMS:
+r = requests.get(
+    url,
+    headers=headers,
+    params=params,
+    timeout=30
+)
 
-    params = {
-        "was": keyword,
-        "wo": "Wilhelmshaven",
-        "umkreis": 40
-    }
+data = r.json()
 
-    r = requests.get(
-        url,
-        headers=headers,
-        params=params,
-        timeout=30
+jobs = data.get("stellenangebote", [])
+
+if jobs:
+
+    job = jobs[0]
+
+    title = job.get("titel", "")
+    company = job.get("arbeitgeber", "")
+    city = job.get("arbeitsort", {}).get("ort", "")
+    date = job.get("aktuelleVeroeffentlichungsdatum", "")
+
+    link = (
+        job.get("externeUrl")
+        or f"https://www.arbeitsagentur.de/jobsuche/jobdetail/{job.get('refnr')}"
     )
 
-    data = r.json()
+    text = (
+        f"🔔 Новая вакансия\n\n"
+        f"📌 {title}\n"
+        f"🏢 {company}\n"
+        f"📍 {city}\n"
+        f"📅 {date}\n\n"
+        f"🔗 {link}"
+    )
 
-    jobs = data.get("stellenangebote", [])
+else:
 
-    messages.append(f"{keyword}: {len(jobs)} вакансий")
-
-    for job in jobs[:3]:
-
-        title = job.get("titel", "")
-        company = job.get("arbeitgeber", "")
-        city = job.get("arbeitsort", {}).get("ort", "")
-
-        messages.append(
-            f"{title}\n{company}\n{city}"
-        )
-
-text = "\n\n".join(messages)
+    text = "Вакансии не найдены"
 
 requests.post(
     f"https://api.telegram.org/bot{token}/sendMessage",
     json={
         "chat_id": chat_id,
-        "text": text
+        "text": text,
+        "disable_web_page_preview": False
     },
     timeout=30
 )
