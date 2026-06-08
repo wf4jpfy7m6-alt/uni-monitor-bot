@@ -13,62 +13,26 @@ print("Telegram variables missing")
 return
 
 ```
-try:
-    requests.post(
-        f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage",
-        json={
-            "chat_id": TELEGRAM_CHAT_ID,
-            "text": text
-        },
-        timeout=30
-    )
-except Exception as e:
-    print("Telegram error:", e)
+url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage"
+
+response = requests.post(
+    url,
+    json={
+        "chat_id": TELEGRAM_CHAT_ID,
+        "text": text
+    },
+    timeout=15
+)
+
+print("Status:", response.status_code)
+print("Response:", response.text)
 ```
 
 def run():
-
-```
-print("=" * 50)
-print("ARBEITSAGENTUR API TEST")
-print(datetime.now())
-print("=" * 50)
-
-send_telegram("🔎 Тест API Arbeitsagentur")
-
-url = "https://rest.arbeitsagentur.de/jobboerse/jobsuche-service/pc/v4/jobs"
-
-headers = {
-    "User-Agent": "Mozilla/5.0",
-    "Accept": "application/json"
-}
-
-params = {
-    "was": "Reinigungskraft",
-    "wo": "Wilhelmshaven",
-    "umkreis": 40,
-    "page": 1
-}
-
-try:
-    r = requests.get(
-        url,
-        headers=headers,
-        params=params,
-        timeout=30
-    )
-
-    print("STATUS:", r.status_code)
-
-    print("\nHEADERS:")
-    print(r.headers)
-
-    print("\nBODY:")
-    print(r.text[:5000])
-
-except Exception as e:
-    print("ERROR:", e)
-```
+print("JOB AGENT TEST")
+send_telegram(
+f"Тест Railway {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}"
+)
 
 if **name** == "**main**":
 run()
