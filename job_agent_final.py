@@ -154,3 +154,106 @@ def search_jobs(keyword):
         )
 
         return []
+# ==========================================
+# Formatting
+# ==========================================
+
+def format_job(job, keyword):
+
+    title = job.get("titel", "Без названия")
+
+    company = job.get(
+        "arbeitgeber",
+        "Не указан"
+    )
+
+    city = (
+        job.get("arbeitsort", {})
+        .get("ort", "Не указан")
+    )
+
+    date = job.get(
+        "aktuelleVeroeffentlichungsdatum",
+        "-"
+    )
+
+    link = (
+        job.get("externeUrl")
+        or f"https://www.arbeitsagentur.de/jobsuche/jobdetail/{job.get('refnr')}"
+    )
+
+    return (
+        f"🔔 Новая вакансия\n\n"
+        f"📌 {title}\n"
+        f"🏢 {company}\n"
+        f"📍 {city}\n"
+        f"📅 {date}\n"
+        f"🔎 {keyword}\n\n"
+        f"🔗 {link}"
+    )
+
+
+# ==========================================
+# Main
+# ==========================================
+
+def run():
+
+    print("=" * 50)
+    print("JOB AGENT START")
+    print(datetime.now())
+    print("=" * 50)
+
+    sent_jobs = load_sent_jobs()
+
+    total_found = 0
+    new_found = 0
+
+    for keyword in SEARCH_TERMS:
+
+        jobs = search_jobs(keyword)
+
+        print(
+            f"{keyword}: {len(jobs)} jobs"
+        )
+
+        total_found += len(jobs)
+
+        for job in jobs:
+
+            job_id = job.get("refnr")
+
+            if not job_id:
+                continue
+
+            if job_id in sent_jobs:
+                continue
+
+            send_telegram(
+                format_job(
+                    job,
+                    keyword
+                )
+            )
+
+            sent_jobs.add(job_id)
+
+            new_found += 1
+
+    save_sent_jobs(sent_jobs)
+
+    report = (
+        f"📊 Отчёт\n\n"
+        f"Всего найдено: {total_found}\n"
+        f"Новых вакансий: {new_found}\n"
+        f"Проверка завершена."
+    )
+
+    send_telegram(report)
+
+    print("Total:", total_found)
+    print("New:", new_found)
+
+
+if __name__ == "__main__":
+    run()
