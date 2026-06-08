@@ -112,7 +112,7 @@ def search_jobs(keyword):
     params = {
         "was": keyword,
         "wo": "Wilhelmshaven",
-        "umkreis": 15
+        "umkreis": 10
     }
 
     try:
