@@ -42,12 +42,10 @@ SEARCH_TERMS = [
     "Sterilisationsassistent",
 
     "Produktionshelfer",
-    "Produktionsmitarbeiter",
-
+    
     "Lagerhelfer",
     "Kommissionierer",
 
-    "Quereinsteiger"
 ]
 # ==========================================
 # Telegram
