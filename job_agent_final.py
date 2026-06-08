@@ -36,21 +36,17 @@ HEADERS = {
 SEARCH_TERMS = [
     "Reinigungskraft",
     "Gebäudereiniger",
-    "Mitarbeiter Reinigung",
+
+    "Reinraum",
     "ZSVA",
     "Sterilisationsassistent",
-    "Reinraum",
+
     "Produktionshelfer",
     "Produktionsmitarbeiter",
-    "Produktionskraft",
-    "Mitarbeiter Produktion",
-    "Helfer Produktion",
+
     "Lagerhelfer",
-    "Lagermitarbeiter",
     "Kommissionierer",
-    "Versandmitarbeiter",
-    "Logistikmitarbeiter",
-    "Logistikhelfer",
+
     "Quereinsteiger"
 ]
 # ==========================================
@@ -116,7 +112,7 @@ def search_jobs(keyword):
     params = {
         "was": keyword,
         "wo": "Wilhelmshaven",
-        "umkreis": 40
+        "umkreis": 15
     }
 
     try:
