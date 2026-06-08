@@ -1,18 +1,33 @@
-import os
 import requests
 
-TOKEN = os.getenv("JOB_TG_TOKEN")
-CHAT_ID = os.getenv("JOB_TG_CHAT_ID")
+url = "https://rest.arbeitsagentur.de/jobboerse/jobsuche-service/pc/v4/jobs"
 
-url = f"https://api.telegram.org/bot{TOKEN}/sendMessage"
+headers = {
+    "User-Agent": "Mozilla/5.0",
+    "Accept": "application/json",
+    "X-API-Key": "jobboerse-jobsuche"
+}
 
-r = requests.post(
-    url,
-    json={
-        "chat_id": CHAT_ID,
-        "text": "Railway job bot works"
-    }
-)
+params = {
+    "was": "Reinigungskraft",
+    "wo": "Wilhelmshaven",
+    "umkreis": 40
+}
 
-print(r.status_code)
-print(r.text)
+try:
+    r = requests.get(
+        url,
+        headers=headers,
+        params=params,
+        timeout=30
+    )
+
+    print("STATUS:")
+    print(r.status_code)
+
+    print("BODY:")
+    print(r.text[:2000])
+
+except Exception as e:
+    print("ERROR:")
+    print(str(e))
