@@ -2,17 +2,21 @@ import asyncio
 import logging
 import os
 
+import httpx
+
 logger = logging.getLogger(__name__)
 
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
 
-# (модель, api_version)
+# Модели в порядке приоритета: (endpoint_version, model_name)
 MODELS_TO_TRY = [
-    ("gemini-1.5-flash",          "v1"),
-    ("gemini-1.5-pro",            "v1"),
-    ("gemini-2.0-flash-lite",     "v1beta"),
-    ("gemini-2.0-flash",          "v1beta"),
+    ("v1",     "gemini-1.5-flash"),
+    ("v1",     "gemini-1.5-pro"),
+    ("v1beta", "gemini-2.0-flash-lite"),
+    ("v1beta", "gemini-2.0-flash"),
 ]
+
+GEMINI_BASE = "https://generativelanguage.googleapis.com"
 
 
 def _build_prompt(position: dict, network: str) -> str:
@@ -36,15 +40,15 @@ def _build_prompt(position: dict, network: str) -> str:
             dist_str = f"Цена выше верхней границы на {dist_pct:.1f}% (нужно снижение −${current - upper:,.0f})"
     elif in_range and upper > lower:
         pos_pct = (current - lower) / (upper - lower) * 100
-        dist_str = f"Цена находится на {pos_pct:.0f}% от нижней границы диапазона"
+        dist_str = f"Цена на {pos_pct:.0f}% от нижней границы диапазона"
     else:
-        dist_str = "Нет данных о расстоянии"
+        dist_str = "Нет данных"
 
     width_pct = (upper - lower) / lower * 100 if lower > 0 else 0
 
-    return f"""Ты DeFi-аналитик. Проанализируй позицию в пуле ликвидности и дай чёткие рекомендации.
+    return f"""Ты DeFi-аналитик. Проанализируй позицию в пуле ликвидности.
 
-ДАННЫЕ ПОЗИЦИИ:
+ПОЗИЦИЯ:Э
 - Сеть: {network}
 - NFT ID: {token_id}
 - Пара: {token0}/{token1}
@@ -54,50 +58,51 @@ def _build_prompt(position: dict, network: str) -> str:
 - Текущая цена: ${current:,.2f}
 - Ширина диапазона: {width_pct:.1f}%
 - {dist_str}
-- Стоимость позиции: ${value_usd:,.2f}
+- Стоимость: ${value_usd:,.2f}
 
-Дай анализ строго в этом формате:
+Ответь строго в этом формате:
 
 📌 *Ситуация*
-[1-2 предложения — что происходит с позицией]
+[1-2 предложения]
 
 ⚠️ *Риски*
-[1-2 конкретных риска для этой позиции]
+[1-2 конкретных риска]
 
 ✅ *Рекомендация*
-[Конкретное действие: держать / скорректировать диапазон / вывести ликвидность — с обоснованием]
+[Конкретное действие с обоснованием]
 
-Пиши на русском. Будь конкретным, без общих фраз."""
+Пиши на русском, кратко и конкретно."""
+
+
+async def _call_gemini(api_version: str, model: str, prompt: str) -> str:
+    url = f"{GEMINI_BASE}/{api_version}/models/{model}:generateContent"
+    payload = {
+        "contents": [{"parts": [{"text": prompt}]}],
+        "generationConfig": {"maxOutputTokens": 512},
+    }
+    async with httpx.AsyncClient(timeout=30) as client:
+        resp = await client.post(
+            url,
+            json=payload,
+            params={"key": GEMINI_API_KEY},
+        )
+    resp.raise_for_status()
+    data = resp.json()
+    return data["candidates"][0]["content"]["parts"][0]["text"]
 
 
 async def analyze_position(position: dict, network: str = "") -> str:
     if not GEMINI_API_KEY:
-        return "⚠️ GEMINI\\_API\\_KEY не задан в переменных окружения."
-
-    try:
-        from google import genai
-        from google.genai import types as genai_types
-    except ImportError:
-        return "⚠️ Пакет google-genai не установлен."
+        return "⚠️ GEMINI\\_API\\_KEY не задан."
 
     prompt = _build_prompt(position, network)
 
-    for model_name, api_version in MODELS_TO_TRY:
+    for api_version, model in MODELS_TO_TRY:
         try:
-            client = genai.Client(
-                api_key=GEMINI_API_KEY,
-                http_options=genai_types.HttpOptions(api_version=api_version),
-            )
-            response = await asyncio.to_thread(
-                client.models.generate_content,
-                model=model_name,
-                contents=prompt,
-            )
-            logger.info("Gemini ответил: модель=%s api=%s", model_name, api_version)
-            return response.text
-
+            text = await _call_gemini(api_version, model, prompt)
+            logger.info("Gemini ответил: %s/%s", api_version, model)
+            return text
         except Exception as exc:
-            logger.warning("Модель %s (%s) недоступна: %s", model_name, api_version, exc)
-            continue
+            logger.warning("Модель %s/%s недоступна: %s", api_version, model, exc)
 
-    return "⚠️ Все модели Gemini недоступны. Проверь GEMINI\\_API\\_KEY в Railway Variables."
+    return "⚠️ Все модели Gemini недоступны. Проверь GEMINI\\_API\\_KEY."
