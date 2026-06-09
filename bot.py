@@ -473,4 +473,40 @@ def main():
                 )
             ],
             ENTERING_WALLET: [
-                MessageHandler(filters.TEXT & ~filters.COMMAND 
+                MessageHandler(filters.TEXT & ~filters.COMMAND & ~filters.Text(["❌ Отмена"]), add_position_wallet)
+            ],
+            ENTERING_GAUGE: [
+                MessageHandler(filters.TEXT & ~filters.COMMAND & ~filters.Text(["❌ Отмена"]), add_position_gauge)
+            ],
+        },
+        fallbacks=[MessageHandler(filters.Text(["❌ Отмена"]) | filters.COMMAND, cancel)],
+    )
+
+    remove_conv = ConversationHandler(
+        entry_points=[MessageHandler(filters.Text(BTN_REMOVE), remove_position_start)],
+        states={
+            CONFIRM_REMOVE: [
+                MessageHandler(filters.TEXT & ~filters.Text(["❌ Отмена"]), remove_position_confirm)
+            ]
+        },
+        fallbacks=[MessageHandler(filters.Text(["❌ Отмена"]) | filters.COMMAND, cancel)],
+    )
+
+    application.add_handler(CommandHandler("start", start))
+    application.add_handler(add_conv)
+    application.add_handler(remove_conv)
+    application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, text_handler))
+
+    # Фоновая проверка позиций
+    application.job_queue.run_repeating(
+        check_and_alert,
+        interval=CHECK_INTERVAL,
+        first=60,  # первая проверка через минуту после старта
+    )
+
+    logger.info("Бот запущен. Проверка позиций каждые %d сек.", CHECK_INTERVAL)
+    application.run_polling()
+
+
+if __name__ == "__main__":
+    main()
