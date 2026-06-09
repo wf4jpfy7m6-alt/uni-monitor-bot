@@ -3,4 +3,5 @@ httpx
 aiohttp
 web3
 openai
+google-genai
 google-generativeai
