@@ -6,10 +6,12 @@ logger = logging.getLogger(__name__)
 
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
 
+# (модель, api_version)
 MODELS_TO_TRY = [
-    "gemini-2.0-flash",
-    "gemini-1.5-flash",
-    "gemini-1.5-pro",
+    ("gemini-1.5-flash",          "v1"),
+    ("gemini-1.5-pro",            "v1"),
+    ("gemini-2.0-flash-lite",     "v1beta"),
+    ("gemini-2.0-flash",          "v1beta"),
 ]
 
 
@@ -74,24 +76,28 @@ async def analyze_position(position: dict, network: str = "") -> str:
 
     try:
         from google import genai
+        from google.genai import types as genai_types
     except ImportError:
-        return "⚠️ Пакет google-genai не установлен. Добавьте его в requirements.txt."
+        return "⚠️ Пакет google-genai не установлен."
 
-    client = genai.Client(api_key=GEMINI_API_KEY)
     prompt = _build_prompt(position, network)
 
-    for model_name in MODELS_TO_TRY:
+    for model_name, api_version in MODELS_TO_TRY:
         try:
+            client = genai.Client(
+                api_key=GEMINI_API_KEY,
+                http_options=genai_types.HttpOptions(api_version=api_version),
+            )
             response = await asyncio.to_thread(
                 client.models.generate_content,
                 model=model_name,
                 contents=prompt,
             )
-            logger.info("Gemini ответил через модель: %s", model_name)
+            logger.info("Gemini ответил: модель=%s api=%s", model_name, api_version)
             return response.text
 
         except Exception as exc:
-            logger.warning("Модель %s недоступна: %s", model_name, exc)
+            logger.warning("Модель %s (%s) недоступна: %s", model_name, api_version, exc)
             continue
 
     return "⚠️ Все модели Gemini недоступны. Проверь GEMINI\\_API\\_KEY в Railway Variables."
