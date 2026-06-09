@@ -152,17 +152,56 @@ def get_main_keyboard():
 # ── Форматирование сообщения о позиции ────────────────────────────────────────
 
 def format_position(p: dict) -> str:
-    status = "✅ В диапазоне" if p.get("in_range") else "❌ Вне диапазона"
+    in_range = p.get("in_range", False)
+    current  = p.get("current_price", 0)
+    lower    = p.get("price_lower", 0)
+    upper    = p.get("price_upper", 0)
+
+    status = "✅ В диапазоне" if in_range else "❌ Вне диапазона"
+
+    # Расстояние до диапазона / позиция внутри
+    extra = ""
+    if current > 0:
+        if not in_range:
+            if current < lower:
+                diff     = lower - current
+                diff_pct = diff / current * 100
+                extra = f"📏 *До входа:* +${diff:,.0f} ({diff_pct:.1f}% вверх)\n"
+            else:
+                diff     = current - upper
+                diff_pct = diff / current * 100
+                extra = f"📏 *До входа:* −${diff:,.0f} ({diff_pct:.1f}% вниз)\n"
+        else:
+            if upper > lower:
+                pos_pct = (current - lower) / (upper - lower) * 100
+                bar = _range_bar(pos_pct)
+                extra = f"📍 *В диапазоне:* {bar} {pos_pct:.0f}%\n"
+
+    # Ширина диапазона
+    width_str = ""
+    if lower > 0 and upper > lower:
+        width_pct = (upper - lower) / lower * 100
+        width_str = f"📐 *Ширина диапазона:* {width_pct:.1f}%\n"
+
     return (
         f"🌐 *Сеть:* {p.get('network')}\n"
         f"🆔 *NFT ID:* `{p.get('token_id')}`\n"
         f"💱 *Пара:* {p.get('token0')} / {p.get('token1')}\n"
         f"📊 *Статус:* {status}\n\n"
-        f"📉 *Нижняя граница:* {p.get('price_lower'):,}\n"
-        f"📈 *Верхняя граница:* {p.get('price_upper'):,}\n"
-        f"💰 *Текущая цена:* {p.get('current_price'):,}\n\n"
-        f"💵 *Общая стоимость:* ${p.get('value_usd'):,.2f}"
+        f"📉 *Нижняя граница:* {lower:,}\n"
+        f"📈 *Верхняя граница:* {upper:,}\n"
+        f"💰 *Текущая цена:* {current:,}\n"
+        f"{extra}"
+        f"{width_str}"
+        f"\n💵 *Общая стоимость:* ${p.get('value_usd', 0):,.2f}"
     )
+
+
+def _range_bar(pct: float, steps: int = 10) -> str:
+    """Текстовый прогресс-бар позиции внутри диапазона."""
+    filled = round(pct / 100 * steps)
+    filled = max(0, min(steps, filled))
+    return "▓" * filled + "░" * (steps - filled)
 
 
 # ── Получение позиций по сети ──────────────────────────────────────────────────
@@ -434,40 +473,4 @@ def main():
                 )
             ],
             ENTERING_WALLET: [
-                MessageHandler(filters.TEXT & ~filters.COMMAND & ~filters.Text(["❌ Отмена"]), add_position_wallet)
-            ],
-            ENTERING_GAUGE: [
-                MessageHandler(filters.TEXT & ~filters.COMMAND & ~filters.Text(["❌ Отмена"]), add_position_gauge)
-            ],
-        },
-        fallbacks=[MessageHandler(filters.Text(["❌ Отмена"]) | filters.COMMAND, cancel)],
-    )
-
-    remove_conv = ConversationHandler(
-        entry_points=[MessageHandler(filters.Text(BTN_REMOVE), remove_position_start)],
-        states={
-            CONFIRM_REMOVE: [
-                MessageHandler(filters.TEXT & ~filters.Text(["❌ Отмена"]), remove_position_confirm)
-            ]
-        },
-        fallbacks=[MessageHandler(filters.Text(["❌ Отмена"]) | filters.COMMAND, cancel)],
-    )
-
-    application.add_handler(CommandHandler("start", start))
-    application.add_handler(add_conv)
-    application.add_handler(remove_conv)
-    application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, text_handler))
-
-    # Фоновая проверка позиций
-    application.job_queue.run_repeating(
-        check_and_alert,
-        interval=CHECK_INTERVAL,
-        first=60,  # первая проверка через минуту после старта
-    )
-
-    logger.info("Бот запущен. Проверка позиций каждые %d сек.", CHECK_INTERVAL)
-    application.run_polling()
-
-
-if __name__ == "__main__":
-    main()
+                MessageHandler(filters.TEXT & ~filters.COMMAND 
