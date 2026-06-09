@@ -1,6 +1,8 @@
-# 🦄 Uni Monitor Bot
+# Uni Monitor Bot
 
-Telegram-бот для мониторинга позиций Uniswap v3 на Arbitrum и Base с AI-анализом через Claude.
+Telegram-бот для мониторинга LP-позиций Uniswap v3 (Arbitrum) и Aerodrome (Base) с AI-анализом.
+
+> Job Monitor Bot (поиск вакансий) вынесен в отдельный репозиторий `job-monitor-bot`.
 
 ## Функции
 
